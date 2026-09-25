@@ -5,6 +5,7 @@
 >
 > **Git 仓库**：https://github.com/lfb83227-roger/asset-screening.git（公开）
 > 路小飞对话指令见 `deploy/路小飞部署指令.txt`（整段复制粘贴即可）。
+> **自有服务器保姆级部署**（systemd 守护 + Nginx + 备份）见 `deploy/独立服务器部署指南.md`。
 
 ---
 
