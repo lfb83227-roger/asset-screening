@@ -7,6 +7,34 @@
 > 路小飞对话指令见 `deploy/路小飞部署指令.txt`（整段复制粘贴即可）。
 > **自有服务器保姆级部署**（systemd 守护 + Nginx + 备份）见 `deploy/独立服务器部署指南.md`。
 
+## 🚀 生产环境（已上线）
+
+| 项 | 值 |
+|---|---|
+| 访问地址 | http://106.54.226.110 |
+| 服务器 | 腾讯云轻量 · 上海 · Ubuntu 24.04.4 LTS · 2核/3.6G |
+| 部署目录 | `/opt/asset-screening`（venv 在 `venv/`） |
+| 服务名 | `systemctl status asset-screening`（已 enable 开机自启 + 崩溃自愈） |
+| 反向代理 | Nginx `80 → 127.0.0.1:8000`，配置在 `/etc/nginx/sites-available/asset-screening` |
+| 数据目录 | `/opt/asset-screening/data/`（SQLite `app.db` + 报告 + 日志） |
+
+### 日常运维（SSH 登录服务器后）
+
+```bash
+sudo systemctl restart asset-screening   # 重启应用
+sudo systemctl status asset-screening    # 查看状态
+sudo journalctl -u asset-screening -f    # 实时日志（Ctrl+C 退出）
+sudo systemctl reload nginx              # 重载 Nginx
+cd /opt/asset-screening && git pull && sudo systemctl restart asset-screening  # 更新代码
+```
+
+### 已做的安全加固
+
+- `APP_SECRET_KEY` 为 32 字节随机值，写入 systemd 服务文件（权限 600）
+- admin / operator / viewer 三个默认口令**已全部作废**并替换为随机强口令
+- 采集模块保持关闭状态（不对任何外部平台发起请求）
+- 服务器可直连 GitHub，后续更新用 `git pull` 即可
+
 ---
 
 ## 一、项目概况（30 秒了解）
