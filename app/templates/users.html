@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block title %}权限与日志 · AI资产智能筛选与评分系统{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>用户权限与操作日志</h1>
+    <p>内部账号权限管理（PRD 五-5）· 一期不开放对外展示端口与客户登录（PRD 六-2）</p>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <h3>角色权限矩阵</h3>
+    <span class="small muted">按最小权限原则分配</span>
+  </div>
+  <div class="panel-body tight">
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead><tr><th>角色</th><th>说明</th><th>查看标的</th><th>录入 / 编辑 / 导出</th>
+          <th>执行采集 / 导入 / 重算</th><th>配置参数与权限</th></tr></thead>
+        <tbody>
+        <tr><td><span class="badge badge-brand">只读查看</span></td>
+          <td class="small muted">业务/管理层查阅初筛结果</td>
+          <td class="small">✓</td><td class="small faint">—</td>
+          <td class="small faint">—</td><td class="small faint">—</td></tr>
+        <tr><td><span class="badge badge-brand">业务操作</span></td>
+          <td class="small muted">运营人员日常使用</td>
+          <td class="small">✓</td><td class="small">✓</td>
+          <td class="small">✓</td><td class="small faint">—</td></tr>
+        <tr><td><span class="badge badge-brand">系统管理员</span></td>
+          <td class="small muted">参数维护与账号管理</td>
+          <td class="small">✓</td><td class="small">✓</td>
+          <td class="small">✓</td><td class="small">✓</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head"><h3>账号列表（{{ users | length }}）</h3></div>
+  <div class="panel-body tight">
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead>
+        <tr><th>账号</th><th>姓名</th><th class="nowrap">角色</th>
+          <th class="nowrap">状态</th><th class="nowrap">最近登录</th>
+          {% if can_edit %}<th style="min-width:340px">调整</th>{% endif %}
+        </tr>
+        </thead>
+        <tbody>
+        {% for u in users %}
+        <tr>
+          <td class="mono">{{ u.username }}</td>
+          <td>{{ u.display_name or '—' }}</td>
+          <td class="nowrap"><span class="badge badge-brand">
+            {{ role_labels.get(u.role, u.role) }}</span></td>
+          <td class="nowrap">
+            {% if u.is_active %}<span class="badge badge-ok">启用</span>
+            {% else %}<span class="badge badge-risk">停用</span>{% endif %}
+          </td>
+          <td class="nowrap small muted">{{ u.last_login_at | dt }}</td>
+          {% if can_edit %}
+          <td>
+            <form method="post" action="/admin/users/{{ u.id }}/update" class="inline-form">
+              <div class="f" style="min-width:120px">
+                <select name="role">
+                  {% for rk, rl in role_labels.items() %}
+                  <option value="{{ rk }}" {{ 'selected' if u.role == rk else '' }}>{{ rl }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="f" style="min-width:130px">
+                <input type="password" name="password" placeholder="新密码（可留空）"
+                       autocomplete="new-password">
+              </div>
+              <span class="checkline" style="margin:0">
+                <input type="checkbox" id="act_{{ u.id }}" name="is_active"
+                       {{ 'checked' if u.is_active else '' }}>
+                <label for="act_{{ u.id }}">启用</label>
+              </span>
+              <button class="btn btn-sm" type="submit">保存</button>
+            </form>
+          </td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% if can_edit %}
+<div class="panel">
+  <div class="panel-head"><h3>新增账号</h3></div>
+  <div class="panel-body">
+    <form method="post" action="/admin/users/new" class="inline-form">
+      <div class="f"><label>账号 *</label>
+        <input type="text" name="username" required placeholder="zhangsan"></div>
+      <div class="f"><label>姓名</label>
+        <input type="text" name="display_name" placeholder="张三"></div>
+      <div class="f"><label>角色</label>
+        <select name="role">
+          {% for rk, rl in role_labels.items() %}<option value="{{ rk }}">{{ rl }}</option>{% endfor %}
+        </select></div>
+      <div class="f"><label>初始密码 *（≥6 位）</label>
+        <input type="password" name="password" required minlength="6"
+               autocomplete="new-password"></div>
+      <button class="btn btn-primary" type="submit">创建账号</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+<div class="grid g-2">
+  <div class="panel">
+    <div class="panel-head"><h3>操作日志</h3>
+      <span class="small muted">最近 60 条</span></div>
+    <div class="panel-body tight">
+      <div class="table-wrap">
+        <table class="tbl">
+          <thead><tr><th class="nowrap">时间</th><th class="nowrap">操作人</th>
+            <th>动作</th><th>对象</th><th>详情</th></tr></thead>
+          <tbody>
+          {% for o in ops %}
+          <tr>
+            <td class="nowrap small">{{ o.created_at | dt('%m-%d %H:%M:%S') }}</td>
+            <td class="nowrap small">{{ o.username or '—' }}</td>
+            <td class="nowrap small"><span class="badge">{{ o.action }}</span></td>
+            <td class="small mono">{{ o.target or '—' }}</td>
+            <td class="tiny muted" style="max-width:260px;overflow:hidden;
+              text-overflow:ellipsis;white-space:nowrap">{{ o.detail | tojson if o.detail else '—' }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="tbl-empty">暂无操作日志</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3>采集日志</h3>
+      <span class="small muted">最近 30 条</span></div>
+    <div class="panel-body tight">
+      <div class="table-wrap">
+        <table class="tbl">
+          <thead><tr><th class="nowrap">时间</th><th class="nowrap">平台</th>
+            <th class="nowrap">状态</th><th class="num">新增</th><th class="num">更新</th></tr></thead>
+          <tbody>
+          {% for l in crawl_logs %}
+          <tr>
+            <td class="nowrap small">{{ l.created_at | dt('%m-%d %H:%M') }}</td>
+            <td class="nowrap small">{{ l.platform | platform }}</td>
+            <td class="nowrap">
+              {% if l.status == 'success' %}<span class="badge badge-ok">成功</span>
+              {% elif l.status == 'skipped' %}<span class="badge badge-warn">跳过</span>
+              {% else %}<span class="badge badge-risk">{{ l.status }}</span>{% endif %}
+            </td>
+            <td class="num">{{ l.created }}</td>
+            <td class="num">{{ l.updated }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="tbl-empty">暂无采集日志</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-body">
+    <details class="help">
+      <summary>安全提示</summary>
+      <ul class="small muted" style="padding-left:18px;line-height:1.9;margin-top:8px">
+        <li>默认账号口令（admin/admin123 等）仅供首次初始化使用，<b>上线前必须全部修改</b>。</li>
+        <li>会话 Cookie 使用服务端密钥签名；生产环境请通过环境变量
+          <span class="mono">APP_SECRET_KEY</span> 设置强随机密钥，不要使用默认值。</li>
+        <li>本系统部署在内网即可满足一期要求；如需公网访问，请置于反向代理之后并启用 HTTPS。</li>
+        <li>数据库连接串（含口令）通过环境变量 <span class="mono">APP_DB_URL</span> 注入，
+          不要写进代码或提交到版本库。</li>
+      </ul>
+    </details>
+  </div>
+</div>
+
+{% endblock %}

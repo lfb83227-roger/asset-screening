@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}采集管理 · AI资产智能筛选与评分系统{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>采集管理</h1>
+    <p>五大数据源适配器状态、采集执行与运行日志</p>
+  </div>
+  <div class="header-actions">
+    <form method="post" action="/crawl/run">
+      <input type="hidden" name="platform" value="all">
+      <button class="btn btn-primary" type="submit">采集全部平台</button>
+    </form>
+    <form method="post" action="/assets/reevaluate-all"
+          onsubmit="return confirm('按当前参数重算全部标的？')">
+      <button class="btn" type="submit">全量重算</button>
+    </form>
+  </div>
+</div>
+
+<div class="flash flash-warn">
+  <b>!</b>
+  <div>
+    <b>关于真实采集的合规前置条件</b>：阿里拍卖、京东司法拍卖等平台均有反爬机制与访问条款限制，
+    系统默认以<b>样本模式</b>运行，不会对外发起任何请求。正式启用真实采集前，需完成两件事：
+    ① 法务确认平台 robots.txt 与用户协议，取得书面授权；② 按平台当前实际 DOM 校正
+    <span class="mono">app/crawler/adapters/*.py</span> 里的 <span class="mono">selector_map</span>
+    （选择器与逻辑分离，改选择器不需要动代码）。两步完成后把该适配器的
+    <span class="mono">enabled</span> 与 <span class="mono">authorization_confirmed</span> 置为 True。
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <h3>数据源适配器</h3>
+    <span class="small muted">新增平台 = 新增一个 adapter 文件 + 在 registry.py 注册，公共管道无需改动</span>
+  </div>
+  <div class="panel-body tight">
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead>
+        <tr>
+          <th>平台</th><th class="nowrap">运行模式</th><th class="nowrap">采集开关</th>
+          <th class="nowrap">授权确认</th><th class="nowrap">字段映射</th>
+          <th>列表页 URL 模板</th><th class="nowrap">操作</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for ad in adapters %}
+        <tr>
+          <td><b>{{ ad.display_name }}</b>
+            <div class="tiny faint">{{ ad.platform }}</div></td>
+          <td class="nowrap">
+            {% if ad.mode == '样本数据' %}
+              <span class="badge badge-warn">样本模式</span>
+            {% else %}<span class="badge badge-ok">真实采集</span>{% endif %}
+          </td>
+          <td class="nowrap">
+            {% if ad.enabled %}<span class="badge badge-ok">已启用</span>
+            {% else %}<span class="badge">未启用</span>{% endif %}
+          </td>
+          <td class="nowrap">
+            {% if not ad.requires_authorization %}— 
+            {% elif ad.authorization_confirmed %}<span class="badge badge-ok">已确认</span>
+            {% else %}<span class="badge badge-risk">未确认</span>{% endif %}
+          </td>
+          <td class="nowrap small">{{ ad.selector_count }} 个选择器</td>
+          <td class="tiny mono muted" style="max-width:300px;overflow:hidden;
+            text-overflow:ellipsis;white-space:nowrap">{{ ad.list_url_template or '—' }}</td>
+          <td class="nowrap">
+            <form method="post" action="/crawl/run" style="display:inline">
+              <input type="hidden" name="platform" value="{{ ad.platform }}">
+              <button class="btn btn-sm" type="submit">执行采集</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <h3>采集运行日志</h3>
+    <span class="small muted">最近 40 条 · 每轮采集的抓取/新增/更新/否决数量均已留痕</span>
+  </div>
+  <div class="panel-body tight">
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead>
+        <tr><th class="nowrap">时间</th><th class="nowrap">平台</th><th class="nowrap">触发</th>
+          <th class="nowrap">状态</th><th class="num">抓取</th><th class="num">新增</th>
+          <th class="num">更新</th><th class="num">耗时(ms)</th><th>说明</th></tr>
+        </thead>
+        <tbody>
+        {% for log in logs %}
+        <tr>
+          <td class="nowrap small">{{ log.created_at | dt }}</td>
+          <td class="nowrap small">{{ log.platform | platform }}</td>
+          <td class="nowrap small muted">{{ log.trigger }}</td>
+          <td class="nowrap">
+            {% if log.status == 'success' %}<span class="badge badge-ok">成功</span>
+            {% elif log.status == 'running' %}<span class="badge badge-brand">运行中</span>
+            {% elif log.status == 'skipped' %}<span class="badge badge-warn">跳过</span>
+            {% else %}<span class="badge badge-risk">失败</span>{% endif %}
+          </td>
+          <td class="num">{{ log.fetched }}</td>
+          <td class="num">{{ log.created }}</td>
+          <td class="num">{{ log.updated }}</td>
+          <td class="num faint">{{ log.duration_ms }}</td>
+          <td class="small muted">{{ log.message or '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="9" class="tbl-empty">
+          还没有采集记录。点击上方「采集全部平台」跑第一轮。
+        </td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head"><h3>7×24 自动轮询部署说明</h3></div>
+  <div class="panel-body">
+    <p class="small muted">PRD 要求「全天候自动轮询抓取」。生产环境用系统计划任务定时调用 CLI 即可：</p>
+    <pre class="code"># Linux crontab：每 30 分钟跑一轮全平台采集
+*/30 * * * * cd /opt/asset-system && /opt/venv/bin/python run.py crawl >> data/logs/crawl.log 2>&1
+
+# 或使用常驻进程（内置间隔循环）
+python run.py schedule --interval 1800
+
+# Windows 任务计划程序：调用
+#   python.exe D:\asset-system\run.py crawl</pre>
+  </div>
+</div>
+
+{% endblock %}

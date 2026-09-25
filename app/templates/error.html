@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}{{ code }} · AI资产智能筛选与评分系统{% endblock %}
+{% block content %}
+<div class="panel">
+  <div class="panel-body" style="text-align:center;padding:60px 20px">
+    <div style="font-size:52px;font-weight:700;color:var(--faint);line-height:1">{{ code }}</div>
+    <p style="margin-top:14px;font-size:15px;color:var(--ink-2)">{{ message }}</p>
+    <div class="btn-row" style="justify-content:center;margin-top:22px">
+      <a class="btn btn-primary" href="/">返回总览</a>
+      <a class="btn" href="/assets">标的库</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

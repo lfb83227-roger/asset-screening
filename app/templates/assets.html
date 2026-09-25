@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}标的库 · AI资产智能筛选与评分系统{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>标的库</h1>
+    <p>共 {{ total }} 条 · 第 {{ page }} / {{ pages }} 页
+      {%- set parts = [] -%}
+      {%- for g in ['A','B','C'] -%}
+        {%- if dist.get(g) -%}{%- set _ = parts.append(g + ' 类 ' + dist.get(g)|string) -%}{%- endif -%}
+      {%- endfor -%}
+      {%- if parts %} · 全库分布：{{ parts | join(' / ') }}{% endif %}</p>
+  </div>
+  <div class="header-actions">
+    <a class="btn" href="/import">批量导入</a>
+    <a class="btn btn-primary" href="/assets/new">录入标的</a>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-body">
+    <form method="get" action="/assets" class="inline-form">
+      <div class="f" style="flex:2;min-width:220px">
+        <label>关键词</label>
+        <input type="search" name="q" value="{{ q }}" placeholder="标题 / 地址 / 编号 / 案号">
+      </div>
+      <div class="f">
+        <label>等级</label>
+        <select name="grade">
+          <option value="">全部</option>
+          {% for g in ['A','B','C'] %}
+          <option value="{{ g }}" {{ 'selected' if grade == g else '' }}>{{ g }} 类</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="f">
+        <label>状态</label>
+        <select name="status">
+          <option value="">全部</option>
+          {% for k, v in ASSET_STATUSES.items() %}
+          <option value="{{ k }}" {{ 'selected' if status == k else '' }}>{{ v }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="f">
+        <label>资产类型</label>
+        <select name="asset_type">
+          <option value="">全部</option>
+          {% for k, v in ASSET_TYPES.items() %}
+          <option value="{{ k }}" {{ 'selected' if asset_type == k else '' }}>{{ v }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="f">
+        <label>城市</label>
+        <select name="city">
+          <option value="">全部</option>
+          {% for c in cities %}
+          <option value="{{ c }}" {{ 'selected' if city == c else '' }}>{{ c }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="f">
+        <label>数据来源</label>
+        <select name="platform">
+          <option value="">全部</option>
+          {% for k, v in PLATFORMS.items() %}
+          <option value="{{ k }}" {{ 'selected' if platform == k else '' }}>{{ v }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="f" style="min-width:100px">
+        <label>得分区间</label>
+        <input type="number" name="min_score" value="{{ min_score }}" placeholder="下限" step="1">
+      </div>
+      <div class="f" style="min-width:100px">
+        <label>&nbsp;</label>
+        <input type="number" name="max_score" value="{{ max_score }}" placeholder="上限" step="1">
+      </div>
+      <div class="f">
+        <label>排序</label>
+        <select name="sort">
+          {% for k, v in sort_options.items() %}
+          <option value="{{ k }}" {{ 'selected' if sort == k else '' }}>{{ v }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button class="btn btn-primary" type="submit">筛选</button>
+      <a class="btn" href="/assets">重置</a>
+    </form>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-body tight">
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead>
+        <tr>
+          <th style="width:44px">等级</th>
+          <th>标的</th>
+          <th class="nowrap">地区</th>
+          <th class="nowrap">类型</th>
+          <th class="num">起拍价</th>
+          <th class="num">折价率</th>
+          <th class="num">净租售比</th>
+          <th class="num">得分</th>
+          <th class="nowrap">标签</th>
+          <th class="nowrap">状态</th>
+          <th class="nowrap">操作</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for a in assets %}
+        <tr>
+          <td>
+            {% if a.grade %}<span class="grade {{ a.grade | grade_class }}">{{ a.grade }}</span>
+            {% else %}<span class="faint">—</span>{% endif %}
+          </td>
+          <td class="title-cell">
+            <a href="/assets/{{ a.id }}">{{ a.title }}</a>
+            <div class="sub">
+              {{ a.external_id or '无编号' }} · {{ a.source_platform | platform }}
+              {% if a.area_sqm %} · {{ a.area_sqm | num(0) }} ㎡{% endif %}
+            </div>
+          </td>
+          <td class="nowrap small">{{ a.city or '—' }}{{ a.district or '' }}</td>
+          <td class="nowrap small">{{ ASSET_TYPES.get(a.asset_type, '—') }}</td>
+          <td class="num nowrap">{{ a.start_price | money_short }}</td>
+          <td class="num">{{ a.discount_rate | pct(1) }}</td>
+          <td class="num">{{ (a.rent_detail or {}).get('net_rent_ratio') | pct(2) }}</td>
+          <td class="num">
+            {% if a.status == 'vetoed' %}<span class="muted">否决</span>
+            {% else %}<b>{{ a.total_score | num(1) }}</b>{% endif %}
+          </td>
+          <td class="nowrap" style="max-width:190px">
+            {% for t in (a.advantage_tags or [])[:2] %}
+              <span class="badge badge-ok">{{ t.name }}</span>
+            {% endfor %}
+            {% for t in (a.risk_tags or [])[:2] %}
+              <span class="badge badge-risk">{{ t.name }}</span>
+            {% endfor %}
+            {% if a.status == 'vetoed' %}
+              <span class="badge badge-risk">已否决</span>
+            {% endif %}
+          </td>
+          <td class="nowrap small">{{ ASSET_STATUSES.get(a.status, a.status) }}</td>
+          <td class="nowrap">
+            <a class="btn btn-sm" href="/assets/{{ a.id }}">详情</a>
+            <a class="btn btn-sm" href="/assets/{{ a.id }}/report.pdf">报告</a>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="11" class="tbl-empty">
+          没有符合条件的标的。可以先去 <a href="/crawl">采集管理</a> 跑一轮采集，
+          或 <a href="/import">批量导入</a> 自己的数据。
+        </td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if pages > 1 %}
+    <div class="pager">
+      {% if page > 1 %}
+        <a href="/assets?{{ query_string }}&page={{ page - 1 }}">上一页</a>
+      {% endif %}
+      {% set start = [1, page - 2] | max %}
+      {% set end = [pages, start + 4] | min %}
+      {% for p in range(start, end + 1) %}
+        {% if p == page %}<span class="cur">{{ p }}</span>
+        {% else %}<a href="/assets?{{ query_string }}&page={{ p }}">{{ p }}</a>{% endif %}
+      {% endfor %}
+      {% if page < pages %}
+        <a href="/assets?{{ query_string }}&page={{ page + 1 }}">下一页</a>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

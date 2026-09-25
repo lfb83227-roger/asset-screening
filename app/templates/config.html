@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}评分参数 · AI资产智能筛选与评分系统{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>评分参数配置</h1>
+    <p>全部参数可视化调整，无需改代码（PRD 五）· 当前五维权重合计
+      <b>{{ weights_total | num(0) }}</b> 分</p>
+  </div>
+  {% if not can_edit %}
+  <span class="badge badge-warn">当前角色为只读，无法保存修改</span>
+  {% endif %}
+</div>
+
+<form method="post" action="/admin/config">
+
+  {% for g in scalar_groups %}
+  <div class="panel">
+    <div class="panel-head">
+      <h3>{{ g.label }}</h3>
+      {% if g.unit %}<span class="small muted">单位：{{ g.unit }}</span>{% endif %}
+    </div>
+    <div class="panel-body">
+      <p class="small muted" style="margin-top:0">{{ g.desc }}</p>
+      <div class="field-grid">
+        {% for fname, flabel in g.fields %}
+        <div class="field">
+          <label>{{ flabel }}</label>
+          <input type="number" step="{{ g.step }}"
+                 name="{{ g.key }}.{{ fname }}"
+                 value="{{ values.get(g.key, {}).get(fname, '') }}"
+                 {{ 'disabled' if not can_edit else '' }}>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+
+  {% for g in anchor_groups %}
+  <div class="panel">
+    <div class="panel-head">
+      <h3>{{ g.label }}</h3>
+      <span class="small muted">
+        对应维度满分 <b>{{ values.get('weights', {}).get(g.dimension, '') | num(0) }}</b> 分
+      </span>
+    </div>
+    <div class="panel-body">
+      <p class="small muted" style="margin-top:0">{{ g.desc }}</p>
+      <textarea name="{{ g.key }}" rows="9" class="mono"
+                {{ 'disabled' if not can_edit else '' }}>{{ anchors.get(g.key) | tojson(indent=2) }}</textarea>
+      <details class="help">
+        <summary>怎么改？举个例子</summary>
+        <p class="small muted">把 4%（0.04）这一档从 18 分下调到 12 分，就是「4% 以下大幅扣分」的口径变得更严：</p>
+        <pre class="code">[
+  [-9.0, 0.0],
+  [0.0, 0.0],
+  [0.02, 6.0],
+  [0.04, 12.0],
+  [0.05, 30.0],
+  [9.0, 30.0]
+]</pre>
+        <p class="small muted">区间内的输入值会在这两个锚点之间线性插值，不需要把每一档都写出来。</p>
+      </details>
+    </div>
+  </div>
+  {% endfor %}
+
+  {% for g in json_groups %}
+  <div class="panel">
+    <div class="panel-head"><h3>{{ g.label }}</h3></div>
+    <div class="panel-body">
+      <p class="small muted" style="margin-top:0">{{ g.desc }}</p>
+      <textarea name="{{ g.key }}" rows="12" class="mono"
+                {{ 'disabled' if not can_edit else '' }}>{{ json_values.get(g.key) | tojson(indent=2) }}</textarea>
+    </div>
+  </div>
+  {% endfor %}
+
+  <div class="panel">
+    <div class="panel-head"><h3>标签开关</h3>
+      <span class="small muted">关闭后该标签不再生成，阈值仍在下方「标签触发阈值」中维护</span></div>
+    <div class="panel-body">
+      <div class="grid g-2">
+        <div>
+          <h4 class="small" style="color:var(--ok)">优势标签</h4>
+          {% for t in tag_registry if t.kind == 'advantage' %}
+          <div class="checkline">
+            <input type="checkbox" id="tag_{{ t.code }}" name="tag.{{ t.code }}"
+                   {{ 'checked' if tag_states.get(t.code, true) else '' }}
+                   {{ 'disabled' if not can_edit else '' }}>
+            <label for="tag_{{ t.code }}">{{ t.name }}
+              <span class="faint tiny"> —— {{ t.desc }}</span></label>
+          </div>
+          {% endfor %}
+        </div>
+        <div>
+          <h4 class="small" style="color:var(--risk)">风险标签</h4>
+          {% for t in tag_registry if t.kind == 'risk' %}
+          <div class="checkline">
+            <input type="checkbox" id="tag_{{ t.code }}" name="tag.{{ t.code }}"
+                   {{ 'checked' if tag_states.get(t.code, true) else '' }}
+                   {{ 'disabled' if not can_edit else '' }}>
+            <label for="tag_{{ t.code }}">{{ t.name }}
+              <span class="faint tiny"> —— {{ t.desc }}</span></label>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3>报告免责声明文案</h3>
+      <span class="badge badge-risk">强制条款 · 不允许置空</span></div>
+    <div class="panel-body">
+      <textarea name="disclaimer" rows="5"
+                {{ 'disabled' if not can_edit else '' }}>{{ disclaimer }}</textarea>
+      <p class="hint">
+        该文案会固定出现在每一份导出 PDF 的末页，以及标的详情页底部。系统禁止将其清空 ——
+        这是 PRD 第一章「核心边界」与第九章「合规兜底条款」的落地方式。
+      </p>
+    </div>
+  </div>
+
+  {% if can_edit %}
+  <div class="panel">
+    <div class="panel-body">
+      <div class="checkline">
+        <input type="checkbox" id="reevaluate" name="reevaluate" checked>
+        <label for="reevaluate"><b>保存后立即对全部标的执行一次重算</b>
+          —— 推荐勾选，否则存量标的仍保留按旧参数算出的结果</label>
+      </div>
+      <div class="btn-row mt12">
+        <button class="btn btn-primary" type="submit">保存参数</button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</form>
+
+<div class="panel">
+  <div class="panel-head"><h3>参数如何影响结果？（可复现性说明）</h3></div>
+  <div class="panel-body">
+    <ul class="small muted" style="padding-left:18px;line-height:1.9;margin:0">
+      <li>评分引擎<b>不使用任何随机数、不调用外部服务</b>，同一份标的 + 同一份参数必然得出同一结果，
+        满足 PRD 验收标准第 3 条「结果可复现」。</li>
+      <li>每次评分都会把当次全量参数快照写入 <span class="mono">score_history.params_snapshot</span>，
+        事后可以精确还原「这个分数当时是按什么参数算出来的」。</li>
+      <li>调整权重不会改变各子项之间的相对关系：子项先算原始分，再按
+        <span class="mono">原始分 ÷ 锚点满分 × 当前权重</span> 折算。</li>
+      <li>参数改动属于审计动作，会记录在<span class="mono">操作日志</span>中，含操作人与变更项。</li>
+    </ul>
+  </div>
+</div>
+
+{% endblock %}

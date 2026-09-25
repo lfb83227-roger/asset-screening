@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 · AI资产智能筛选与评分系统</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="login-wrap">
+  <div class="login-card">
+    <h1>AI资产智能筛选与评分系统</h1>
+    <p class="sub">不良资产线上公开数据初筛工具</p>
+
+    {% if ok %}<div class="flash flash-ok"><b>✓</b><span>{{ ok }}</span></div>{% endif %}
+    {% if err %}<div class="flash flash-err"><b>!</b><span>{{ err }}</span></div>{% endif %}
+
+    <form method="post" action="/login">
+      <div class="field">
+        <label for="username">账号</label>
+        <input type="text" id="username" name="username" autocomplete="username"
+               autofocus required placeholder="请输入账号">
+      </div>
+      <div class="field">
+        <label for="password">密码</label>
+        <input type="password" id="password" name="password"
+               autocomplete="current-password" required placeholder="请输入密码">
+      </div>
+      <button class="btn btn-primary" type="submit">登录</button>
+    </form>
+
+    <div class="demo-accounts">
+      初始账号（生产环境请立即修改口令）：<br>
+      管理员 <code>admin / admin123</code>　·　业务操作 <code>operator / operator123</code>
+      <br>只读查看 <code>viewer / viewer123</code>
+    </div>
+  </div>
+</div>
+</body>
+</html>

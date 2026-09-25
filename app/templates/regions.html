@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}区域基准 · AI资产智能筛选与评分系统{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>区域大数据基准</h1>
+    <p>租金、税费、空置与流动性均值 · 净租售比测算时会按「城市+区县+资产类型」逐级匹配（PRD 四-2）</p>
+  </div>
+  <form method="get" action="/admin/regions" class="inline-form">
+    <div class="f"><input type="search" name="q" value="{{ keyword }}" placeholder="城市 / 区县"></div>
+    <button class="btn" type="submit">搜索</button>
+  </form>
+</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <h3>匹配优先级</h3>
+    <span class="small muted">逐级降级，结果中会标注实际使用的来源</span>
+  </div>
+  <div class="panel-body">
+    <div class="pill-row">
+      <span class="badge badge-ok">1. 城市 + 区县 + 资产类型（精确）</span>
+      <span class="badge badge-brand">2. 城市 + 资产类型（同城均值）</span>
+      <span class="badge badge-warn">3. 系统默认系数（兜底）</span>
+    </div>
+    <p class="hint mt8">
+      标的自身录入的「租金 / 产业配套 / 出租需求 / 转手成交率」优先于区域均值 ——
+      人工调研的数据通常比大数据均值更准。
+    </p>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head"><h3>基准数据（{{ rows | length }} 条）</h3></div>
+  <div class="panel-body tight">
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead>
+        <tr>
+          <th class="nowrap">城市</th><th class="nowrap">区县</th><th class="nowrap">资产类型</th>
+          <th class="num nowrap">租金<br><span class="tiny faint">元/㎡/月</span></th>
+          <th class="num nowrap">土地税<br><span class="tiny faint">元/㎡/年</span></th>
+          <th class="num nowrap">房产税率</th>
+          <th class="num nowrap">空置率</th>
+          <th class="num nowrap">维保费率</th>
+          <th class="nowrap">城市能级</th>
+          <th class="num nowrap">产业配套</th>
+          <th class="num nowrap">出租需求</th>
+          <th class="num nowrap">转手成交率</th>
+          {% if can_edit %}<th class="nowrap">操作</th>{% endif %}
+        </tr>
+        </thead>
+        <tbody>
+        {% for r in rows %}
+        <tr>
+          <td class="nowrap">{{ r.city }}</td>
+          <td class="nowrap">{{ r.district or '—' }}</td>
+          <td class="nowrap small">{{ ASSET_TYPES.get(r.asset_type, r.asset_type) }}</td>
+          <td class="num">{{ r.rent_per_sqm_month | num(2) }}</td>
+          <td class="num">{{ r.land_use_tax_per_sqm | num(2) }}</td>
+          <td class="num">{{ r.property_tax_rate | pct(1) }}</td>
+          <td class="num">{{ r.vacancy_ratio | pct(1) }}</td>
+          <td class="num">{{ r.maintenance_ratio | pct(1) }}</td>
+          <td class="nowrap small">{{ CITY_TIERS.get(r.city_tier, r.city_tier) }}</td>
+          <td class="num">{{ r.industry_support_ratio | pct(0) }}</td>
+          <td class="num">{{ r.rental_demand_ratio | pct(0) }}</td>
+          <td class="num">{{ r.turnover_ratio | pct(0) }}</td>
+          {% if can_edit %}
+          <td class="nowrap">
+            <form method="post" action="/admin/regions/{{ r.id }}/delete" style="display:inline"
+                  onsubmit="return confirm('确认删除该条区域基准？')">
+              <button class="btn btn-sm btn-danger" type="submit">删除</button>
+            </form>
+          </td>
+          {% endif %}
+        </tr>
+        {% else %}
+        <tr><td colspan="13" class="tbl-empty">没有匹配的记录</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% if can_edit %}
+<div class="panel">
+  <div class="panel-head"><h3>新增 / 覆盖区域基准</h3>
+    <span class="small muted">同一「城市 + 区县 + 资产类型」重复提交会覆盖原记录</span></div>
+  <div class="panel-body">
+    <form method="post" action="/admin/regions/save">
+      <div class="field-grid">
+        <div class="field"><label>省份</label>
+          <input type="text" name="province" placeholder="广东省"></div>
+        <div class="field"><label>城市 *</label>
+          <input type="text" name="city" placeholder="深圳市" required></div>
+        <div class="field"><label>区县</label>
+          <input type="text" name="district" placeholder="南山区（留空表示全市均值）"></div>
+        <div class="field"><label>资产类型</label>
+          <select name="asset_type">
+            {% for k, v in ASSET_TYPES.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}
+          </select></div>
+
+        <div class="field"><label>租金（元/㎡/月）</label>
+          <input type="number" name="rent_per_sqm_month" step="0.1" value="0"></div>
+        <div class="field"><label>土地使用税（元/㎡/年）</label>
+          <input type="number" name="land_use_tax_per_sqm" step="0.1" value="6"></div>
+        <div class="field"><label>房产税率（%）</label>
+          <input type="number" name="property_tax_rate_pct" step="0.1" value="12"></div>
+        <div class="field"><label>空置损耗预留（%）</label>
+          <input type="number" name="vacancy_ratio_pct" step="0.1" value="10"></div>
+
+        <div class="field"><label>修缮运维费率（%）</label>
+          <input type="number" name="maintenance_ratio_pct" step="0.1" value="5"></div>
+        <div class="field"><label>城市能级</label>
+          <select name="city_tier">
+            {% for k, v in CITY_TIERS.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}
+          </select></div>
+        <div class="field"><label>产业配套成熟度（%）</label>
+          <input type="number" name="industry_support_ratio" step="1" value="50"></div>
+        <div class="field"><label>区域出租需求（%）</label>
+          <input type="number" name="rental_demand_ratio" step="1" value="50"></div>
+
+        <div class="field"><label>同类资产转手成交率（%）</label>
+          <input type="number" name="turnover_ratio" step="1" value="50"></div>
+        <div class="field"><label>数据来源</label>
+          <input type="text" name="data_source" value="后台手工维护"></div>
+        <div class="field"><label>生效日期</label>
+          <input type="text" name="effective_date" placeholder="2026-09"></div>
+      </div>
+      <div class="btn-row mt12">
+        <button class="btn btn-primary" type="submit">保存区域基准</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% block title %}总览 · AI资产智能筛选与评分系统{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>运营总览</h1>
+    <p>线上公开数据初筛结果一览 · 数据截至 {{ now.strftime('%Y-%m-%d %H:%M') }}</p>
+  </div>
+  <div class="header-actions">
+    <form method="post" action="/crawl/run">
+      <input type="hidden" name="platform" value="all">
+      <button class="btn" type="submit">立即采集全平台</button>
+    </form>
+    <form method="post" action="/assets/reevaluate-all"
+          onsubmit="return confirm('将按当前参数重算全部标的，确认继续？')">
+      <button class="btn" type="submit">全量重算</button>
+    </form>
+    <a class="btn btn-primary" href="/assets/new">录入标的</a>
+  </div>
+</div>
+
+<div class="grid g-4">
+  <div class="kpi">
+    <div class="k-label">标的总数</div>
+    <div class="k-value c-brand">{{ total }}</div>
+    <div class="k-sub">近 7 天新增 {{ new_7d }} 条</div>
+  </div>
+  <div class="kpi">
+    <div class="k-label">A 类优质标的</div>
+    <div class="k-value c-ok">{{ by_grade.get('A', 0) }}</div>
+    <div class="k-sub">≥ {{ 80 }} 分，建议进入尽调池</div>
+  </div>
+  <div class="kpi">
+    <div class="k-label">一票否决 / C 类剔除</div>
+    <div class="k-value c-risk">{{ by_grade.get('C', 0) }}</div>
+    <div class="k-sub">其中否决直接剔除 {{ by_status.get('vetoed', 0) }} 条</div>
+  </div>
+  <div class="kpi">
+    <div class="k-label">已评分标的平均分</div>
+    <div class="k-value">{{ avg_score }}</div>
+    <div class="k-sub">满分按五维权重合计计算</div>
+  </div>
+</div>
+
+<div class="grid g-2-1 mt16">
+  <div class="panel">
+    <div class="panel-head">
+      <h3>优质标的 TOP 8</h3>
+      <a class="small" href="/assets?sort=score_desc">查看全部 →</a>
+    </div>
+    <div class="panel-body tight">
+      <div class="table-wrap">
+        <table class="tbl">
+          <thead>
+          <tr>
+            <th style="width:44px">等级</th>
+            <th>标的</th>
+            <th>地区</th>
+            <th class="num">得分</th>
+            <th class="num">折价率</th>
+            <th class="num">净租售比</th>
+            <th class="nowrap">来源</th>
+          </tr>
+          </thead>
+          <tbody>
+          {% for a in top_assets %}
+          <tr>
+            <td><span class="grade {{ a.grade | grade_class }}">{{ a.grade }}</span></td>
+            <td class="title-cell">
+              <a href="/assets/{{ a.id }}">{{ a.title }}</a>
+              <div class="sub">{{ a.asset_type | default('', true) and ASSET_TYPES.get(a.asset_type, '') }}
+                · {{ a.area_sqm | num(0) }} ㎡</div>
+            </td>
+            <td class="nowrap small">{{ a.city or '—' }}{{ a.district or '' }}</td>
+            <td class="num"><b>{{ a.total_score | num(2) }}</b></td>
+            <td class="num">{{ a.discount_rate | pct(1) }}</td>
+            <td class="num">{{ (a.rent_detail or {}).get('net_rent_ratio') | pct(2) }}</td>
+            <td class="nowrap small muted">{{ a.source_platform | platform }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="7" class="tbl-empty">暂无已评分标的，请先执行采集或录入标的</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3>等级分布</h3></div>
+    <div class="panel-body">
+      {% for g in ['A', 'B', 'C'] %}
+      {% set n = by_grade.get(g, 0) %}
+      <div class="dist">
+        <span class="d-label">
+          <span class="grade {{ g | grade_class }}" style="width:20px;height:20px;font-size:12px">{{ g }}</span>
+          {{ GRADES[g].replace('标的', '') }}
+        </span>
+        <span class="d-bar"><i style="width:{{ (n / total_for_bar * 100) | round(1) }}%;
+          background:{{ {'A':'var(--ok)','B':'var(--warn)','C':'var(--risk)'}[g] }}"></i></span>
+        <span class="d-val">{{ n }}</span>
+      </div>
+      {% endfor %}
+
+      <div class="sep"></div>
+      <h4 class="small muted">按资产类型</h4>
+      {% for k, v in by_type.items() | sort(attribute='1', reverse=true) %}
+      <div class="dist">
+        <span class="d-label small">{{ ASSET_TYPES.get(k, k) }}</span>
+        <span class="d-bar"><i style="width:{{ (v / max_type * 100) | round(1) }}%"></i></span>
+        <span class="d-val">{{ v }}</span>
+      </div>
+      {% endfor %}
+
+      <div class="sep"></div>
+      <h4 class="small muted">按数据来源</h4>
+      {% for k, v in by_platform.items() | sort(attribute='1', reverse=true) %}
+      <div class="dist">
+        <span class="d-label small">{{ PLATFORMS.get(k, k) }}</span>
+        <span class="d-bar"><i style="width:{{ (v / max_plat * 100) | round(1) }}%;
+          background:var(--faint)"></i></span>
+        <span class="d-val">{{ v }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="grid g-2 mt16">
+  <div class="panel">
+    <div class="panel-head">
+      <h3>临近截止的优质标的</h3>
+      <span class="small muted">15 天内截止 · 已过初筛</span>
+    </div>
+    <div class="panel-body tight">
+      <div class="table-wrap">
+        <table class="tbl">
+          <thead>
+          <tr><th style="width:44px">等级</th><th>标的</th>
+            <th class="nowrap">截止时间</th><th class="num">剩余</th><th class="num">得分</th></tr>
+          </thead>
+          <tbody>
+          {% for a in soon %}
+          <tr>
+            <td><span class="grade {{ a.grade | grade_class }}">{{ a.grade }}</span></td>
+            <td class="title-cell"><a href="/assets/{{ a.id }}">{{ a.title }}</a></td>
+            <td class="nowrap small">{{ a.deadline_at | dt('%m-%d %H:%M') }}</td>
+            <td class="num small">{{ a.deadline_days_left | days_left }}</td>
+            <td class="num">{{ a.total_score | num(1) }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="tbl-empty">近 15 天内没有截止的已评分标的</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h3>最近采集与操作</h3>
+      <a class="small" href="/admin/users">全部日志 →</a>
+    </div>
+    <div class="panel-body tight">
+      <div class="table-wrap">
+        <table class="tbl">
+          <thead>
+          <tr><th class="nowrap">时间</th><th>对象</th><th>结果</th></tr>
+          </thead>
+          <tbody>
+          {% for log in logs %}
+          <tr>
+            <td class="nowrap small">{{ log.created_at | dt('%m-%d %H:%M') }}</td>
+            <td class="small">{{ log.platform | platform }}<span class="faint"> · {{ log.trigger }}</span></td>
+            <td class="small">
+              {% if log.status == 'success' %}<span class="badge badge-ok">成功</span>
+              {% elif log.status == 'skipped' %}<span class="badge badge-warn">跳过</span>
+              {% else %}<span class="badge badge-risk">失败</span>{% endif %}
+              新增 {{ log.created }} / 更新 {{ log.updated }}
+            </td>
+          </tr>
+          {% endfor %}
+          {% for op in recent_ops %}
+          <tr>
+            <td class="nowrap small">{{ op.created_at | dt('%m-%d %H:%M') }}</td>
+            <td class="small">{{ op.username or '—' }}<span class="faint"> · {{ op.action }}</span></td>
+            <td class="small muted">{{ op.target or '—' }}</td>
+          </tr>
+          {% endfor %}
+          {% if not logs and not recent_ops %}
+          <tr><td colspan="3" class="tbl-empty">暂无记录</td></tr>
+          {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="panel mt16">
+  <div class="panel-body">
+    <div class="disclaimer">
+      <b>合规提示</b>：本系统所有测算数据、评分结果仅为线上公开数据初筛参考，不构成投资建议、
+      资产收益承诺或过户担保。所有标的最终准入、尽调与决策权归人工专业团队，
+      必须经过线下实地深度尽调复核。系统不承诺资产可过户、可清场、可出租、可盈利。
+    </div>
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}否决规则 · AI资产智能筛选与评分系统{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>一票否决规则</h1>
+    <p>命中任意一条即判定 0 分、C 类淘汰，不参与五维量化打分（PRD 模块2）· 优先级数值越小越先判定</p>
+  </div>
+  <div class="header-actions">
+    <form method="post" action="/admin/veto/reevaluate"
+          onsubmit="return confirm('按最新规则重算全部标的？')">
+      <button class="btn btn-primary" type="submit">保存后全量重算</button>
+    </form>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-body">
+    <p class="small muted" style="margin:0">
+      判定模型：每条规则内 <b>结构化字段条件 OR 关键词命中</b>。字段条件是确定性的、优先采信；
+      关键词是对公告原文的兜底扫描。关键词匹配带<b>否定护栏</b> —— 命中关键词后会回看前 6 个字，
+      若出现「不 / 未 / 非 / 无 / 不属于 / 并非 / 排除」等否定词则不计命中
+      （例：<span class="mono">"不属于无法清退情形"</span> 不会误判）。
+      一期按 PRD 要求<b>不引入大模型语义解析</b>。
+    </p>
+  </div>
+</div>
+
+<form method="post" action="/admin/veto/save">
+  {% for r in rules %}
+  <div class="panel">
+    <div class="panel-head">
+      <h3>
+        <span class="badge badge-brand">{{ r.code }}</span>
+        {{ r.name }}
+        <span class="faint small">历史命中 {{ hit_counter.get(r.code, 0) }} 条</span>
+      </h3>
+      <div class="btn-row">
+        <span class="checkline"><input type="checkbox" id="en_{{ r.code }}"
+          name="enabled.{{ r.code }}" {{ 'checked' if r.enabled else '' }}>
+          <label for="en_{{ r.code }}">启用规则</label></span>
+        <span class="checkline"><input type="checkbox" id="kw_{{ r.code }}"
+          name="kw.{{ r.code }}" {{ 'checked' if r.keyword_enabled else '' }}>
+          <label for="kw_{{ r.code }}">启用关键词扫描</label></span>
+      </div>
+    </div>
+    <div class="panel-body">
+      <p class="small muted" style="margin-top:0">{{ r.description }}</p>
+      <div class="field-grid">
+        <div class="field" style="max-width:160px">
+          <label>判定优先级</label>
+          <input type="number" name="priority.{{ r.code }}" value="{{ r.priority }}" step="1">
+        </div>
+        <div class="field span2">
+          <label>关键词（逗号分隔）</label>
+          <input type="text" name="keywords.{{ r.code }}"
+                 value="{{ (r.keywords or []) | join(', ') }}"
+                 placeholder="留空表示不做关键词扫描">
+        </div>
+      </div>
+      <div class="field mt8">
+        <label>结构化字段条件（JSON 数组，可引用字段见下方清单）</label>
+        <textarea name="conditions.{{ r.code }}" rows="6"
+          class="mono">{{ (r.field_conditions or []) | tojson(indent=2) }}</textarea>
+      </div>
+      {% if can_edit %}
+      <div class="btn-row mt8">
+        <button class="btn btn-danger btn-sm" type="button"
+          onclick="if(confirm('确认删除规则 {{ r.code }}？删除后需要重新全量重算。'))
+                   {document.getElementById('del-{{ r.id }}').submit();}">
+          删除该规则
+        </button>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+
+  {% if can_edit %}
+  <div class="panel">
+    <div class="panel-body">
+      <button class="btn btn-primary" type="submit">保存全部规则</button>
+      <span class="hint" style="display:inline;margin-left:10px">
+        保存后建议点右上角「保存后全量重算」，否则存量标的仍保留旧判定结果。
+      </span>
+    </div>
+  </div>
+  {% endif %}
+</form>
+
+{% if can_edit %}
+{% for r in rules %}
+<form id="del-{{ r.id }}" method="post" action="/admin/veto/{{ r.id }}/delete"
+      style="display:none"></form>
+{% endfor %}
+
+<div class="panel">
+  <div class="panel-head"><h3>新增自定义否决规则</h3></div>
+  <div class="panel-body">
+    <form method="post" action="/admin/veto/new" class="inline-form">
+      <div class="f" style="min-width:90px"><label>规则编号</label>
+        <input type="text" name="code" placeholder="V6" required></div>
+      <div class="f" style="min-width:180px"><label>规则名称</label>
+        <input type="text" name="name" placeholder="例如：无法分割整体处置" required></div>
+      <div class="f" style="flex:1;min-width:240px"><label>规则说明</label>
+        <input type="text" name="description" placeholder="业务口径描述"></div>
+      <div class="f" style="flex:1;min-width:240px"><label>关键词（逗号分隔）</label>
+        <input type="text" name="keywords" placeholder="无法分割, 整体处置受限"></div>
+      <button class="btn btn-primary" type="submit">新增</button>
+    </form>
+    <p class="hint mt8">新增后可在上方卡片里继续补充结构化字段条件。</p>
+  </div>
+</div>
+{% endif %}
+
+<div class="panel">
+  <div class="panel-head"><h3>可在字段条件中引用的字段</h3>
+    <span class="small muted">运算符：eq / ne / in / not_in / gt / gte / lt / lte / is_true / is_false / truthy / contains</span>
+  </div>
+  <div class="panel-body tight">
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead><tr><th>字段名</th><th>含义</th><th>示例条件</th></tr></thead>
+        <tbody>
+        {% for name, label in field_options %}
+        <tr>
+          <td class="mono small">{{ name }}</td>
+          <td class="small">{{ label }}</td>
+          <td class="mono tiny muted">
+            {% if name in ('tax_owed', 'land_idle_fee', 'construction_arrears',
+                           'total_arrears', 'seal_count', 'mortgage_count') %}
+              {"field": "{{ name }}", "op": "gte", "value": 100000, "label": "阈值命中"}
+            {% elif name == 'land_nature' %}
+              {"field": "land_nature", "op": "eq", "value": "collective", "label": "集体用地"}
+            {% elif name == 'lease_status' %}
+              {"field": "lease_status", "op": "in", "value": ["long_term", "sale_not_break"]}
+            {% elif name == 'scrap_status' %}
+              {"field": "scrap_status", "op": "in",
+               "value": ["equipment_scrapped", "land_no_value", "property_unusable"]}
+            {% else %}
+              {"field": "{{ name }}", "op": "is_true", "label": "命中描述"}
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-body">
+    <details class="help">
+      <summary>组合条件的写法（AND 子条件）</summary>
+      <pre class="code mt8">[
+  {
+    "field": "land_nature",
+    "op": "eq",
+    "value": "allocated",
+    "label": "划拨用地",
+    "and": [
+      { "field": "can_supplement_procedure", "op": "is_false" }
+    ]
+  }
+]
+表示：土地性质为划拨 且 无法补办手续 → 命中。</pre>
+    </details>
+  </div>
+</div>
+
+{% endblock %}

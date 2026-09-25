@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}AI资产智能筛选与评分系统{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="/">
+      <span class="brand-mark">资</span>
+      <span>AI资产智能筛选与评分系统</span>
+    </a>
+    {% if user %}
+    <nav class="nav">
+      {% for item in NAV_ITEMS %}
+        <a href="{{ item.url }}" class="{{ 'active' if active == item.key else '' }}">{{ item.label }}</a>
+      {% endfor %}
+    </nav>
+    <div class="topbar-right">
+      <span class="role-chip">{{ ROLE_LABELS.get(user.role, user.role) }}</span>
+      <span>{{ user.display_name or user.username }}</span>
+      <a href="/logout">退出</a>
+    </div>
+    {% endif %}
+  </div>
+</header>
+
+<main class="wrap">
+  {% if ok %}<div class="flash flash-ok"><b>✓</b><span>{{ ok }}</span></div>{% endif %}
+  {% if err %}<div class="flash flash-err"><b>!</b><span>{{ err }}</span></div>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

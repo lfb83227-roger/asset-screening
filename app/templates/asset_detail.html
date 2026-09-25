@@ -1,0 +1,367 @@
+{% extends "base.html" %}
+{% block title %}{{ a.title }} · 标的详情{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1 style="margin-bottom:2px">{{ a.title or '未命名标的' }}</h1>
+    <p>
+      #{{ a.id }} · {{ a.source_platform | platform }}
+      {% if a.external_id %} · 编号 {{ a.external_id }}{% endif %}
+      {% if a.address %} · {{ a.address }}{% endif %}
+    </p>
+  </div>
+  <div class="header-actions">
+    <a class="btn" href="/assets">返回列表</a>
+    <a class="btn" href="/assets/{{ a.id }}/edit">编辑</a>
+    <form method="post" action="/assets/{{ a.id }}/reevaluate">
+      <button class="btn" type="submit">按当前参数重算</button>
+    </form>
+    <a class="btn btn-primary" href="/assets/{{ a.id }}/report.pdf">导出 PDF 报告</a>
+  </div>
+</div>
+
+{# ============================== 得分总览 ============================== #}
+<div class="score-hero {{ 'vetoed' if a.status == 'vetoed' else '' }}">
+  <div style="text-align:center">
+    <div class="sh-num">{{ '0.00' if a.status == 'vetoed' else (a.total_score | num(2)) }}</div>
+    <div class="sh-unit">满分 {{ (a.score_detail or {}).get('weights_total', 100) | num(0) }}</div>
+  </div>
+  <div>
+    <span class="grade grade-lg {{ a.grade | grade_class }}">{{ a.grade or '—' }}</span>
+  </div>
+  <div class="sh-meta">
+    <div class="t">{{ GRADES.get(a.grade, '未分级') }}
+      <span class="badge {{ 'badge-risk' if a.status == 'vetoed' else 'badge-brand' }}">
+        {{ ASSET_STATUSES.get(a.status, a.status) }}</span>
+    </div>
+    <div class="s">
+      折价率 <b>{{ a.discount_rate | pct(1) }}</b>　·　
+      净租售比 <b>{{ (a.rent_detail or {}).get('net_rent_ratio') | pct(2) }}</b>　·　
+      起拍价 <b>{{ a.start_price | money_short }}</b>　·　
+      截止 <b>{{ a.deadline_at | dt('%Y-%m-%d') }}</b>
+      （{{ a.deadline_days_left | days_left }}）
+    </div>
+    <div class="s" style="margin-top:4px">
+      评估时间 {{ a.scored_at | dt }}　·　引擎 {{ a.engine_version or '—' }}
+    </div>
+  </div>
+</div>
+
+{# ============================== 一票否决 ============================== #}
+{% if a.veto_hits %}
+<div class="panel mt16">
+  <div class="panel-head">
+    <h3 style="color:var(--risk)">一票否决命中情况（最高优先级）</h3>
+    <span class="badge badge-risk">直接判定 0 分 · C 类淘汰 · 不参与量化打分</span>
+  </div>
+  <div class="panel-body">
+    <div class="veto-box">
+      {% for h in a.veto_hits %}
+      <div class="veto-item">
+        <b style="color:var(--risk)">{{ h.code }} · {{ h.name }}</b>
+        <span class="small muted"> —— {{ h.description }}</span>
+        {% for ev in h.evidences %}
+        <div class="v-ev">↳ {{ ev }}</div>
+        {% endfor %}
+        {% if h.suppressed_keywords %}
+        <details class="help">
+          <summary>否定护栏拦下 {{ h.suppressed_keywords | length }} 处关键词（点击查看）</summary>
+          {% for s in h.suppressed_keywords %}
+          <div class="small muted">「{{ s.keyword }}」在「{{ s.context }}」中被判定为{{ s.reason }}</div>
+          {% endfor %}
+        </details>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ============================== 五维明细 ============================== #}
+<div class="grid g-2-1 mt16">
+  <div class="panel">
+    <div class="panel-head"><h3>五维量化评分明细</h3>
+      <span class="small muted">得分 = 原始分 ÷ 锚点满分 × 当前权重</span>
+    </div>
+    <div class="panel-body">
+      {% if dims %}
+        {% for code in dim_order %}
+          {% set d = dims.get(code) %}
+          {% if d %}
+          <div class="dim-row">
+            <div class="dim-name">{{ d.label }}
+              <small>{{ d.note }}</small>
+            </div>
+            <div class="bar {{ d.score | score_class(d.weight) }}">
+              <i style="width:{{ (d.rate * 100) | round(1) }}%"></i>
+            </div>
+            <div class="dim-score"><b>{{ d.score | num(2) }}</b> / {{ d.weight | num(0) }}</div>
+          </div>
+          {% endif %}
+        {% endfor %}
+      {% else %}
+        <p class="muted small">该标的已触发一票否决，未进入五维量化打分。</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3>标签与结论</h3></div>
+    <div class="panel-body">
+      <h4 class="small muted" style="margin-bottom:7px">优势标签</h4>
+      <div class="pill-row">
+        {% for t in (a.advantage_tags or []) %}
+        <span class="tag tag-adv"><b>{{ t.name }}</b>
+          {% if t.detail %}<span class="tag-extra">{{ t.detail }}</span>{% endif %}</span>
+        {% else %}<span class="faint small">（无）</span>{% endfor %}
+      </div>
+      <h4 class="small muted mt16" style="margin-bottom:7px">风险标签</h4>
+      <div class="pill-row">
+        {% for t in (a.risk_tags or []) %}
+        <span class="tag tag-risk"><b>{{ t.name }}</b>
+          {% if t.detail %}<span class="tag-extra">{{ t.detail }}</span>{% endif %}</span>
+        {% else %}<span class="faint small">（无）</span>{% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if dims %}
+<div class="panel">
+  <div class="panel-head"><h3>各维度子项得分</h3></div>
+  <div class="panel-body tight">
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead>
+        <tr><th style="width:150px">维度</th><th>子项</th><th class="nowrap">实际值</th>
+          <th class="num nowrap">原始分</th><th class="num nowrap">封顶</th><th>计分说明</th></tr>
+        </thead>
+        <tbody>
+        {% for code in dim_order %}
+          {% set d = dims.get(code) %}
+          {% if d %}
+            {% set sub_items = d['items'] %}
+            {% for it in sub_items %}
+            <tr>
+              {% if loop.first %}
+              <td rowspan="{{ sub_items | length }}">
+                <b>{{ d.label }}</b>
+                <div class="small muted">{{ d.score | num(2) }} / {{ d.weight | num(0) }}</div>
+              </td>
+              {% endif %}
+              <td>{{ it.name }}</td>
+              <td class="nowrap">{{ it.value }}</td>
+              <td class="num">{{ it.raw | num(2) }}</td>
+              <td class="num faint">{{ it.max | num(1) }}</td>
+              <td class="small muted">{{ it.note }}</td>
+            </tr>
+            {% endfor %}
+          {% endif %}
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ============================== 净租售比 ============================== #}
+<div class="panel">
+  <div class="panel-head">
+    <h3>净租售比测算明细</h3>
+    <span class="small muted">{{ (a.rent_detail or {}).get('formula', '') }}</span>
+  </div>
+  <div class="panel-body">
+    {% set rd = a.rent_detail or {} %}
+    {% if not rd.get('computable') %}
+      <div class="flash flash-warn">
+        <b>!</b><span>无法完成测算：{{ rd.get('reason', '数据不足') }}。
+        该维度按 0 分计，补充起拍价 / 面积 / 租金数据可在编辑页重算。</span>
+      </div>
+    {% else %}
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead><tr><th style="width:44px"></th><th>项目</th><th class="num">金额</th><th>说明</th></tr></thead>
+        <tbody>
+        {% for line in rd.get('lines', []) %}
+        <tr>
+          <td class="mono muted">{{ line.sign }}</td>
+          <td>{{ line.name }}</td>
+          <td class="num nowrap"><b>{{ line.amount | money }}</b></td>
+          <td class="small muted">{{ line.note }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="sep"></div>
+    <div class="grid g-3">
+      <table class="kv">
+        <tr><th>净租售比</th><td><b style="font-size:16px;color:var(--brand)">
+          {{ rd.get('net_rent_ratio_pct') }}</b></td></tr>
+        <tr><th>成交预估价值</th><td>{{ rd.get('deal_value') | money }}</td></tr>
+      </table>
+      <table class="kv">
+        <tr><th>成交价值口径</th><td class="small">{{ rd.get('deal_basis') or '—' }}</td></tr>
+        <tr><th>租金数据来源</th><td class="small">{{ rd.get('rent_source') or '—' }}</td></tr>
+      </table>
+      <table class="kv">
+        <tr><th>区域基准匹配</th><td class="small">{{ rd.get('benchmark_matched') or '—' }}
+          <div class="faint">
+            {% if rd.get('benchmark_source') == 'exact' %}区县级精确匹配
+            {% elif rd.get('benchmark_source') == 'city' %}同城均值
+            {% else %}系统默认系数{% endif %}
+          </div></td></tr>
+        <tr><th>有效参数</th><td class="small mono">
+          {% for k, v in (rd.get('params_used') or {}).items() %}{{ k }}={{ v }}　{% endfor %}
+        </td></tr>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{# ============================== 结论 ============================== #}
+<div class="panel">
+  <div class="panel-head"><h3>系统初筛结论</h3>
+    <span class="badge badge-brand">{{ GRADES.get(a.grade, '') }}</span></div>
+  <div class="panel-body">
+    <div class="conclusion">{{ a.conclusion or '—' }}</div>
+  </div>
+</div>
+
+{# ============================== 基础信息 ============================== #}
+<div class="grid g-3">
+  <div class="panel">
+    <div class="panel-head"><h3>标的基础信息</h3></div>
+    <div class="panel-body">
+      <table class="kv">
+        <tr><th>资产类型</th><td>{{ ASSET_TYPES.get(a.asset_type, '—') }}</td></tr>
+        <tr><th>所在地区</th><td>{{ [a.province, a.city, a.district] | select | join(' / ') or '—' }}</td></tr>
+        <tr><th>标的地址</th><td>{{ a.address or '—' }}</td></tr>
+        <tr><th>建筑面积</th><td>{{ a.area_sqm | money('㎡') }}</td></tr>
+        <tr><th>土地面积</th><td>{{ a.land_area_sqm | money('㎡') }}</td></tr>
+        <tr><th>起拍价</th><td>{{ a.start_price | money }}</td></tr>
+        <tr><th>评估价</th><td>{{ a.appraisal_price | money }}</td></tr>
+        <tr><th>周边成交价</th><td>{{ a.market_price | money }}</td></tr>
+        <tr><th>保证金</th><td>{{ a.deposit | money }}</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3>挂牌与司法</h3></div>
+    <div class="panel-body">
+      <table class="kv">
+        <tr><th>挂牌时间</th><td>{{ a.listed_at | dt }}</td></tr>
+        <tr><th>截止时间</th><td>{{ a.deadline_at | dt }}</td></tr>
+        <tr><th>拍卖轮次</th><td>{{ AUCTION_ROUNDS.get(a.auction_round, '—') }}</td></tr>
+        <tr><th>处置法院</th><td>{{ a.court or '—' }}</td></tr>
+        <tr><th>案号</th><td>{{ a.case_no or '—' }}</td></tr>
+        <tr><th>抵押数量</th><td>{{ a.mortgage_count or 0 }} 笔</td></tr>
+        <tr><th>轮候查封</th><td>{{ a.seal_count or 0 }} 轮</td></tr>
+        <tr><th>涉诉案件</th><td>{{ a.lawsuit_count or 0 }} 件</td></tr>
+        <tr><th>纠纷频次</th><td>{{ a.dispute_freq or 0 }} 次</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3>权属、占用与欠费</h3></div>
+    <div class="panel-body">
+      <table class="kv">
+        <tr><th>土地性质</th><td>{{ LAND_NATURES.get(a.land_nature, '—') }}</td></tr>
+        <tr><th>剩余年限</th><td>{{ a.land_remaining_years | num(1) }} 年</td></tr>
+        <tr><th>办理登记</th><td>{{ a.registration_ok | bool3 }}</td></tr>
+        <tr><th>限制转让</th><td>{{ a.transfer_restricted | bool3 }}</td></tr>
+        <tr><th>合规等级</th><td class="small">{{ COMPLIANCE_LEVELS.get(a.compliance_level, '—') }}</td></tr>
+        <tr><th>租赁情况</th><td>{{ LEASE_STATUSES.get(a.lease_status, '—') }}</td></tr>
+        <tr><th>占用情况</th><td>{{ a.occupied | bool3 }}</td></tr>
+        <tr><th>可否清场</th><td>{{ a.can_clear | bool3 }}</td></tr>
+        <tr><th>欠费合计</th><td><b>{{ a.total_arrears | money }}</b></td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% if a.raw_text %}
+<div class="panel">
+  <div class="panel-head"><h3>公告原文</h3>
+    <span class="small muted">文本结构化在采集入库时自动执行，不覆盖人工录入值</span></div>
+  <div class="panel-body"><pre class="code">{{ a.raw_text }}</pre></div>
+</div>
+{% endif %}
+
+{# ============================== 横向对比与历史 ============================== #}
+<div class="grid g-2">
+  <div class="panel">
+    <div class="panel-head"><h3>同城同类标的对比</h3></div>
+    <div class="panel-body tight">
+      <div class="table-wrap">
+        <table class="tbl">
+          <thead><tr><th style="width:40px">等级</th><th>标的</th>
+            <th class="num">得分</th><th class="num">折价率</th></tr></thead>
+          <tbody>
+          <tr style="background:var(--brand-soft)">
+            <td><span class="grade {{ a.grade | grade_class }}">{{ a.grade or '—' }}</span></td>
+            <td class="small"><b>{{ a.title }}</b> <span class="badge badge-brand">当前标的</span></td>
+            <td class="num"><b>{{ a.total_score | num(1) }}</b></td>
+            <td class="num">{{ a.discount_rate | pct(1) }}</td>
+          </tr>
+          {% for p in peers %}
+          <tr>
+            <td><span class="grade {{ p.grade | grade_class }}">{{ p.grade }}</span></td>
+            <td class="small"><a href="/assets/{{ p.id }}">{{ p.title }}</a></td>
+            <td class="num">{{ p.total_score | num(1) }}</td>
+            <td class="num">{{ p.discount_rate | pct(1) }}</td>
+          </tr>
+          {% endfor %}
+          {% if not peers %}
+          <tr><td colspan="4" class="tbl-empty small">同城同类暂无其他已评分标的</td></tr>
+          {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3>评分历史</h3>
+      <span class="small muted">共 {{ history | length }} 次，参数快照已归档</span></div>
+    <div class="panel-body tight">
+      <div class="table-wrap">
+        <table class="tbl">
+          <thead><tr><th class="nowrap">时间</th><th class="nowrap">触发</th>
+            <th class="num">得分</th><th>等级</th><th>引擎</th></tr></thead>
+          <tbody>
+          {% for h in history %}
+          <tr>
+            <td class="nowrap small">{{ h.created_at | dt }}</td>
+            <td class="small">{{ h.trigger }}</td>
+            <td class="num">{{ h.total_score | num(2) }}</td>
+            <td><span class="grade {{ h.grade | grade_class }}
+              style="width:20px;height:20px;font-size:12px">{{ h.grade }}</span></td>
+            <td class="tiny muted">{{ h.engine_version }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="tbl-empty small">暂无历史记录</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-body">
+    <div class="disclaimer">
+      <b>合规免责声明（报告强制自带）</b>：本报告基于公开平台数据 AI 自动测算，仅为初步筛选参考，
+      不构成资产投资、过户、收益承诺，所有标的需线下人工深度尽调复核。
+    </div>
+  </div>
+</div>
+
+{% endblock %}

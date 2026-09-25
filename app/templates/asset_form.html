@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}{{ '编辑标的' if asset else '录入标的' }} · AI资产智能筛选与评分系统{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>{{ '编辑标的 #' ~ asset.id if asset else '录入新标的' }}</h1>
+    <p>保存后系统立即执行「一票否决 → 五维评分 → 标签生成 → 分级」，并写入评分历史</p>
+  </div>
+  <div class="header-actions">
+    <a class="btn" href="{{ '/assets/' ~ asset.id if asset else '/assets' }}">取消</a>
+  </div>
+</div>
+
+{% if errors %}
+<div class="flash flash-err">
+  <b>!</b>
+  <div>表单校验未通过：<br>
+    {% for e in errors %}- {{ e }}<br>{% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<form method="post" action="/assets/save">
+  {% if asset %}<input type="hidden" name="asset_id" value="{{ asset.id }}">{% endif %}
+
+  {% for sec in sections %}
+  <div class="panel">
+    <div class="panel-head"><h3>{{ sec.group }}</h3></div>
+    <div class="panel-body">
+      <div class="field-grid">
+        {% for f in sec.fields %}
+        <div class="field {{ 'span2' if f.span == 2 else '' }}">
+          <label for="f_{{ f.name }}">{{ f.label }}{% if f.required %} *{% endif %}</label>
+
+          {% if f.type == 'select' %}
+            <select id="f_{{ f.name }}" name="{{ f.name }}">
+              {% for k, v in f.options.items() %}
+              <option value="{{ k }}" {{ 'selected' if values.get(f.name) == k else '' }}>{{ v }}</option>
+              {% endfor %}
+            </select>
+
+          {% elif f.type == 'tri' %}
+            <select id="f_{{ f.name }}" name="{{ f.name }}">
+              <option value="" {{ 'selected' if not values.get(f.name) else '' }}>未载明</option>
+              <option value="是" {{ 'selected' if values.get(f.name) == '是' else '' }}>是</option>
+              <option value="否" {{ 'selected' if values.get(f.name) == '否' else '' }}>否</option>
+            </select>
+
+          {% elif f.type == 'textarea' %}
+            <textarea id="f_{{ f.name }}" name="{{ f.name }}" rows="5"
+              placeholder="整段粘贴公告原文，系统会自动抽取面积、起拍价、欠费金额、租赁与占用情况等字段（不覆盖上方已填值）">{{ values.get(f.name, '') }}</textarea>
+
+          {% elif f.type == 'int' %}
+            <input type="number" id="f_{{ f.name }}" name="{{ f.name }}" step="1" min="0"
+                   value="{{ values.get(f.name, '') }}">
+
+          {% elif f.type == 'money' %}
+            <input type="number" id="f_{{ f.name }}" name="{{ f.name }}" step="any" min="0"
+                   value="{{ values.get(f.name, '') }}" placeholder="元">
+
+          {% elif f.type == 'datetime' %}
+            <input type="datetime-local" id="f_{{ f.name }}" name="{{ f.name }}"
+                   value="{{ values.get(f.name, '') }}">
+
+          {% elif f.type == 'ratio' %}
+            <input type="number" id="f_{{ f.name }}" name="{{ f.name }}" step="0.1"
+                   min="0" max="100" value="{{ values.get(f.name, '') }}" placeholder="0~100">
+
+          {% else %}
+            <input type="text" id="f_{{ f.name }}" name="{{ f.name }}"
+                   value="{{ values.get(f.name, '') }}">
+          {% endif %}
+
+          {% if f.name == 'rent_per_sqm_month' %}
+            <div class="hint">留空则取区域大数据均值；填写后优先使用</div>
+          {% elif f.name == 'annual_gross_rent_override' %}
+            <div class="hint">填写后直接作为年毛租金，优先级最高</div>
+          {% elif f.name == 'market_price' %}
+            <div class="hint">留空则以评估价作为折价率参考价</div>
+          {% elif f.type == 'ratio' %}
+            <div class="hint">可填 0~100（百分数）或 0~1</div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+
+  <div class="panel">
+    <div class="panel-body">
+      <div class="btn-row">
+        <button class="btn btn-primary" type="submit">保存并评估</button>
+        <a class="btn" href="{{ '/assets/' ~ asset.id if asset else '/assets' }}">取消</a>
+        {% if asset %}
+        <form method="post" action="/assets/{{ asset.id }}/delete" style="display:inline"
+              onsubmit="return confirm('确认归档该标的？归档后不再出现在默认列表中，但保留审计记录。')">
+          <button class="btn btn-danger" type="submit">归档该标的</button>
+        </form>
+        {% endif %}
+      </div>
+      <p class="hint mt12">
+        提示：一票否决模块优先于量化评分。命中任意否决规则时，该标的直接判定 0 分、C 类淘汰，
+        不参与五维打分 —— 这是 PRD 模块2 的硬性要求。
+      </p>
+    </div>
+  </div>
+</form>
+
+{% endblock %}

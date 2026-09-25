@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}批量导入 · AI资产智能筛选与评分系统{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>批量导入</h1>
+    <p>支持 CSV / XLSX，导入后自动归一化字段、抽取公告信息并完成评分</p>
+  </div>
+  <div class="header-actions">
+    <a class="btn btn-primary" href="/import/template.csv">下载导入模板</a>
+  </div>
+</div>
+
+<div class="grid g-2-1">
+  <div class="panel">
+    <div class="panel-head"><h3>上传文件</h3></div>
+    <div class="panel-body">
+      <form method="post" action="/import/upload" enctype="multipart/form-data">
+        <div class="field">
+          <label for="file">选择文件（.csv / .xlsx，单文件 ≤ 20MB）</label>
+          <input type="file" id="file" name="file" accept=".csv,.xlsx,.xlsm" required>
+          <div class="hint">
+            CSV 会自动尝试 UTF-8-BOM / UTF-8 / GBK 三种编码，Excel 导出的 GBK 文件可直接上传。
+          </div>
+        </div>
+        <button class="btn btn-primary mt12" type="submit">开始导入并评分</button>
+      </form>
+
+      <div class="sep"></div>
+
+      <h4>导入规则</h4>
+      <ul class="small muted" style="padding-left:18px;line-height:1.9;margin:0">
+        <li>同一 <b>标的编号 + 数据来源</b> 的记录视为同一标的，重复导入会<b>更新为最新版本</b>并递增数据版本号，不会产生重复行。</li>
+        <li>「公告原文」列会被自动结构化：用规则抽取建筑面积、起拍价、评估价、欠税金额、
+          租赁状态、占用情况、查封轮数等字段。<b>只会填补空白列，不覆盖你已填写的值</b>。</li>
+        <li>列名支持常见别名：「起拍价 / 起拍价格 / 起拍价(元)」都能识别；金额支持
+          <span class="mono">600万</span> 与 <span class="mono">6000000</span> 两种写法。</li>
+        <li>无法识别的列不会被静默丢弃，会在下方错误明细里回显给你。</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h3>模板列清单</h3></div>
+    <div class="panel-body">
+      <div class="pill-row">
+        {% for col in columns %}
+        <span class="badge">{{ col }}</span>
+        {% endfor %}
+      </div>
+      <p class="hint mt12">
+        列可以少填、可以调整顺序，但建议保留「标的名称」与「公告原文」两列 ——
+        前者是唯一必填，后者能让系统自动补齐大量结构化字段。
+      </p>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head"><h3>导入批次记录</h3></div>
+  <div class="panel-body tight">
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead>
+        <tr><th class="nowrap">批次号</th><th>文件</th><th class="nowrap">操作人</th>
+          <th class="num">总行数</th><th class="num">成功</th><th class="num">失败</th>
+          <th class="nowrap">时间</th><th>错误明细</th></tr>
+        </thead>
+        <tbody>
+        {% for b in batches %}
+        <tr>
+          <td class="nowrap mono small">{{ b.batch_no }}</td>
+          <td class="small">{{ b.filename or '—' }}</td>
+          <td class="small">{{ b.operator or '—' }}</td>
+          <td class="num">{{ b.total_rows }}</td>
+          <td class="num"><b style="color:var(--ok)">{{ b.imported }}</b></td>
+          <td class="num">{% if b.failed %}<b style="color:var(--risk)">{{ b.failed }}</b>
+            {% else %}0{% endif %}</td>
+          <td class="nowrap small">{{ b.created_at | dt }}</td>
+          <td>
+            {% if b.error_report %}
+            <details class="help"><summary>{{ b.error_report | length }} 条提示</summary>
+              {% for e in b.error_report %}
+              <div class="small muted">第 {{ e.row }} 行：{{ e.error }}</div>
+              {% endfor %}
+            </details>
+            {% else %}<span class="faint small">—</span>{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="tbl-empty">还没有导入记录</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

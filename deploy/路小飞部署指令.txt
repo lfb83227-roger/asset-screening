@@ -1,0 +1,30 @@
+【复制下面整段话，粘贴到路小飞会话里】
+
+我在附件里上传了一个完整的可运行项目「AI资产智能筛选与评分系统」（zip 包），
+请帮我把它跑起来并部署上线。
+
+【项目概况】
+- 技术栈：Python 3.11+ / FastAPI / SQLite / Jinja2 服务端渲染，无前端构建步骤
+- 形态：单体 Web 应用，单进程，内存占用 <300MB
+- 外部依赖：无（采集模块默认关闭真实网络抓取，不会对外发请求）
+
+【部署步骤】（解压后，在项目根目录执行）
+1. pip install -r requirements.txt
+2. python run.py init --with-samples
+   （自动建表 + 默认参数 + 默认账号 + 15 条内置样本标的）
+3. 环境变量：APP_HOST=0.0.0.0，APP_PORT 用平台分配的端口（没有就默认 8000）
+4. python run.py serve
+
+【验收标准】
+- GET /api/health 返回 JSON
+- GET /login 出现登录页
+- 用 admin / admin123 登录后：仪表盘有统计卡片，/assets 有 15 条样本标的
+- /assets/2 详情页五维评分明细正常渲染
+- /assets/2/report.pdf 能下载 PDF 报告（中文正常显示）
+
+【注意事项】
+- 数据库是 SQLite，落在 ./data/app.db，请确保 ./data/ 目录可写且在持久化空间内
+- PDF 导出需要中文字体；沙箱若没有中文字体会自动降级为内置 CID 字体
+  （STSong-Light），不影响功能；想字更好看可先装 fonts-wqy-zenhei
+- 启动命令是常驻进程，请确保后台持续运行并绑定到公网入口
+- 验证完成后，帮我把它发布为公网可访问的链接
