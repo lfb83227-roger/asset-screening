@@ -5,8 +5,9 @@
 <div class="page-head">
   <div>
     <h1>评分参数配置</h1>
-    <p>全部参数可视化调整，无需改代码（PRD 五）· 当前五维权重合计
-      <b>{{ weights_total | num(0) }}</b> 分</p>
+    <p>全部参数可视化调整，无需改代码（PRD 五）· 物权五维权重合计
+      <b>{{ property_weight_total | num(0) }}</b> 分 · 债权五维权重合计
+      <b>{{ debt_weight_total | num(0) }}</b> 分</p>
   </div>
   {% if not can_edit %}
   <span class="badge badge-warn">当前角色为只读，无法保存修改</span>

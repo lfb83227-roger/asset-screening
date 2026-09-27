@@ -26,6 +26,7 @@ from app.models import Asset, ScoreHistory
 class Evaluation:
     status: str
     veto_hits: list = field(default_factory=list)
+    penalty_hits: list = field(default_factory=list)
     total_score: float = 0.0
     grade: str = "C"
     score_detail: dict = field(default_factory=dict)
@@ -44,15 +45,20 @@ _GRADE_ACTION = {
     "C": "建议直接剔除，放弃该标的以释放人力。",
 }
 
+_ASSET_CLASS_LABEL = {"property": "物权", "debt": "债权"}
 
-def _build_conclusion(veto_hits, total, grade, dims, advantages, risks) -> str:
+
+def _build_conclusion(veto_hits, penalty_hits, total, grade, dims, advantages, risks,
+                      asset_class: str = "property") -> str:
+    track = _ASSET_CLASS_LABEL.get(asset_class, "物权")
     if veto_hits:
         names = "、".join(f"{h['code']} {h['name']}" for h in veto_hits)
         ev = "；".join(h["evidences"][0] for h in veto_hits if h.get("evidences"))
         return (f"命中一票否决规则（{names}）：{ev}。系统判定 0 分、{C.GRADES['C']}，"
                 f"不参与量化打分，直接剔除。")
 
-    parts = [f"综合得分 {total:.2f} 分（满分 100），判定为{C.GRADES[grade]}。"]
+    parts = [f"【{track}轨道】综合得分 {total:.2f} 分（满分 100），"
+             f"判定为{C.GRADES[grade]}。"]
     if dims:
         order = dims.get("order", [])
         seg = "、".join(
@@ -61,6 +67,10 @@ def _build_conclusion(veto_hits, total, grade, dims, advantages, risks) -> str:
             for c in order if c in dims.get("dimensions", {})
         )
         parts.append(f"五维明细：{seg}。")
+
+    if penalty_hits:
+        parts.append("重点扣分项：" + "、".join(
+            f"{h['code']} {h['name']}" for h in penalty_hits) + "（已计入量化打分）。")
 
     if advantages:
         parts.append("优势：" + "、".join(a["name"] for a in advantages) + "。")
@@ -76,31 +86,39 @@ def _build_conclusion(veto_hits, total, grade, dims, advantages, risks) -> str:
 
 # ==================================================================== 纯函数评估
 def evaluate(asset: Asset, ruleset: RuleSet, bench: dict) -> Evaluation:
-    # 1) 一票否决（最高优先级，命中即终止）
-    veto_hits = evaluate_veto(asset, ruleset)
+    asset_class = "debt" if getattr(asset, "is_debt", False) else "property"
+
+    # 1) 一票否决 / 重点扣分项（最高优先级）
+    veto_result = evaluate_veto(asset, ruleset)
+    veto_hits = veto_result["veto"]
+    penalty_hits = veto_result["penalty"]
 
     bench = push_down_benchmark(bench, asset)
-    rent_detail = compute_rent(asset, ruleset, bench)
+    # 债权轨道不需要租金测算，传空 detail 即可
+    rent_detail = {} if asset_class == "debt" else compute_rent(asset, ruleset, bench)
 
     if veto_hits:
         advantages, risks = evaluate_tags(asset, ruleset, {}, rent_detail)
         return Evaluation(
             status="vetoed",
             veto_hits=veto_hits,
+            penalty_hits=penalty_hits,
             total_score=0.0,
             grade="C",
-            score_detail={"dimensions": {}, "order": [], "vetoed": True,
-                          "weights_total": round(ruleset.total_weight(), 2),
+            score_detail={"asset_class": asset_class, "dimensions": {}, "order": [],
+                          "vetoed": True,
+                          "weights_total": round(ruleset.total_weight(asset_class), 2),
                           "total_score": 0.0},
             rent_detail=rent_detail,
             advantage_tags=advantages,
             risk_tags=risks,
-            conclusion=_build_conclusion(veto_hits, 0.0, "C", {}, advantages, risks),
-            params_snapshot=ruleset.to_snapshot(),
+            conclusion=_build_conclusion(veto_hits, penalty_hits, 0.0, "C", {},
+                                         advantages, risks, asset_class),
+            params_snapshot=ruleset.to_snapshot(asset_class),
         )
 
-    # 2) 五维打分
-    score_detail, total = score_all(asset, ruleset, rent_detail, bench)
+    # 2) 五维打分（按轨道分流）
+    score_detail, total = score_all(asset, ruleset, rent_detail, bench, penalty_hits)
     from app.core.scoring import grade_of
     grade = grade_of(total, ruleset)
 
@@ -110,14 +128,16 @@ def evaluate(asset: Asset, ruleset: RuleSet, bench: dict) -> Evaluation:
     return Evaluation(
         status="scored",
         veto_hits=[],
+        penalty_hits=penalty_hits,
         total_score=total,
         grade=grade,
         score_detail=score_detail,
         rent_detail=rent_detail,
         advantage_tags=advantages,
         risk_tags=risks,
-        conclusion=_build_conclusion([], total, grade, score_detail, advantages, risks),
-        params_snapshot=ruleset.to_snapshot(),
+        conclusion=_build_conclusion([], penalty_hits, total, grade, score_detail,
+                                     advantages, risks, asset_class),
+        params_snapshot=ruleset.to_snapshot(asset_class),
     )
 
 
@@ -130,7 +150,9 @@ def evaluate_and_persist(db: Session, asset: Asset, trigger: str = "manual",
 
     now = datetime.now()
     asset.status = result.status
-    asset.veto_hits = result.veto_hits or None
+    # 落库仍写 veto_hits（兼容既有列）；重点扣分项并入同一列以便详情页展示，
+    # 但每条都带 action 字段，前端可区分"否决"与"扣分"。
+    asset.veto_hits = (result.veto_hits + result.penalty_hits) or None
     asset.total_score = result.total_score
     asset.grade = result.grade
     asset.score_detail = result.score_detail
@@ -148,7 +170,7 @@ def evaluate_and_persist(db: Session, asset: Asset, trigger: str = "manual",
         asset_id=asset.id,
         total_score=result.total_score,
         grade=result.grade,
-        veto_hits=result.veto_hits or None,
+        veto_hits=(result.veto_hits + result.penalty_hits) or None,
         score_detail=result.score_detail,
         rent_detail=result.rent_detail,
         advantage_tags=result.advantage_tags,

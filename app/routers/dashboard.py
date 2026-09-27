@@ -34,6 +34,23 @@ def dashboard(request: Request, db: Session = Depends(get_db),
         select(Asset.source_platform, func.count(Asset.id))
         .group_by(Asset.source_platform)
     ).all())
+    by_class = dict(db.execute(
+        select(Asset.asset_class, func.count(Asset.id))
+        .group_by(Asset.asset_class)
+    ).all())
+    # 各轨道平均分（债权覆盖倍数单独看更有意义）
+    avg_by_class = {
+        k: v for k, v in db.execute(
+            select(Asset.asset_class, func.avg(Asset.total_score))
+            .where(Asset.status == "scored").group_by(Asset.asset_class)
+        ).all() if v is not None
+    }
+    stale_count = db.execute(
+        select(func.count(Asset.id)).where(
+            Asset.asset_class == "property",
+            Asset.appraisal_at.is_not(None),
+        )
+    ).scalar_one()
 
     scored = [g for g in ("A", "B", "C") if g in by_grade]
     avg_score = db.execute(
@@ -74,6 +91,8 @@ def dashboard(request: Request, db: Session = Depends(get_db),
         request, "dashboard.html", user=user, active="dashboard",
         total=total, by_grade=by_grade, by_status=by_status,
         by_type=by_type, by_platform=by_platform, scored_grades=scored,
+        by_class=by_class,
+        avg_by_class={k: round(v, 2) for k, v in avg_by_class.items()},
         avg_score=round(avg_score, 2) if avg_score else 0.0,
         new_7d=new_7d, top_assets=top_assets, soon=soon,
         recent_ops=recent_ops, logs=recent_logs(db, 6),

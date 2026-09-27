@@ -24,7 +24,7 @@
   <div class="kpi">
     <div class="k-label">标的总数</div>
     <div class="k-value c-brand">{{ total }}</div>
-    <div class="k-sub">近 7 天新增 {{ new_7d }} 条</div>
+    <div class="k-sub">物权 {{ by_class.get('property', 0) }} · 债权 {{ by_class.get('debt', 0) }}</div>
   </div>
   <div class="kpi">
     <div class="k-label">A 类优质标的</div>
@@ -39,7 +39,7 @@
   <div class="kpi">
     <div class="k-label">已评分标的平均分</div>
     <div class="k-value">{{ avg_score }}</div>
-    <div class="k-sub">满分按五维权重合计计算</div>
+    <div class="k-sub">物权 {{ avg_by_class.get('property', '—') }} · 债权 {{ avg_by_class.get('debt', '—') }}</div>
   </div>
 </div>
 
@@ -58,8 +58,8 @@
             <th>标的</th>
             <th>地区</th>
             <th class="num">得分</th>
-            <th class="num">折价率</th>
-            <th class="num">净租售比</th>
+            <th class="num">折价率 / 覆盖</th>
+            <th class="num">净租售比 / 顺位</th>
             <th class="nowrap">来源</th>
           </tr>
           </thead>
@@ -69,13 +69,22 @@
             <td><span class="grade {{ a.grade | grade_class }}">{{ a.grade }}</span></td>
             <td class="title-cell">
               <a href="/assets/{{ a.id }}">{{ a.title }}</a>
-              <div class="sub">{{ a.asset_type | default('', true) and ASSET_TYPES.get(a.asset_type, '') }}
+              <div class="sub">
+                {% if a.is_debt %}<span class="badge badge-debt">债权</span>{% else %}<span class="badge badge-prop">物权</span>{% endif %}
+                {{ ASSET_TYPES.get(a.asset_type, '') }}
                 · {{ a.area_sqm | num(0) }} ㎡</div>
             </td>
             <td class="nowrap small">{{ a.city or '—' }}{{ a.district or '' }}</td>
             <td class="num"><b>{{ a.total_score | num(2) }}</b></td>
-            <td class="num">{{ a.discount_rate | pct(1) }}</td>
-            <td class="num">{{ (a.rent_detail or {}).get('net_rent_ratio') | pct(2) }}</td>
+            <td class="num">
+              {% if a.is_debt %}
+                {% if a.guarantee_coverage is not none %}{{ a.guarantee_coverage | num(2) }}×{% else %}—{% endif %}
+              {% else %}{{ a.discount_rate | pct(1) }}{% endif %}
+            </td>
+            <td class="num">
+              {% if a.is_debt %}<span class="small">{{ GUARANTEE_RANKS.get(a.guarantee_rank, '—') }}</span>
+              {% else %}{{ (a.rent_detail or {}).get('net_rent_ratio') | pct(2) }}{% endif %}
+            </td>
             <td class="nowrap small muted">{{ a.source_platform | platform }}</td>
           </tr>
           {% else %}

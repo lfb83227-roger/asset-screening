@@ -51,38 +51,105 @@ def r2(v: float | None, nd: int = 2) -> float | None:
 # ==================================================================== RuleSet
 @dataclass
 class RuleSet:
-    """一次评分所需的全部参数与规则（不可变快照）。"""
+    """一次评分所需的全部参数与规则（不可变快照）。
 
+    双轨制说明：物权与债权是**两套完全独立**的权重、锚点、分值表。
+    为兼容历史调用（以及旧配置键），`weights` / `DIMENSION_*` 等单轨字段
+    保留为"物权轨"的别名，但所有引擎一律走 `weights_for(asset_class)`。
+    """
+
+    # ---- 物权轨
     weights: dict[str, float]
-    grade_thresholds: dict[str, float]
     price_anchors: list[list[float]]
     rent_anchors: list[list[float]]
-    land_year_anchors: list[list[float]]
-    cost_params: dict[str, float]
-    legal_penalty: dict[str, float]
-    location_params: dict[str, Any]
-    ownership_params: dict[str, Any]
-    tag_thresholds: dict[str, float]
-    tag_enabled: dict[str, bool]
-    default_rent_per_sqm_month: dict[str, float]
+    clearance_anchors: list[list[float]] = field(default_factory=list)
+    holding_cost_anchors: list[list[float]] = field(default_factory=list)
+    # ---- 债权轨
+    weights_debt: dict[str, float] = field(default_factory=dict)
+    coverage_anchors: list[list[float]] = field(default_factory=list)
+    debt_rank_scores: dict[str, float] = field(default_factory=dict)
+    debt_execution_scores: dict[str, float] = field(default_factory=dict)
+    debt_solvency_scores: dict[str, float] = field(default_factory=dict)
+    debt_doc_scores: dict[str, float] = field(default_factory=dict)
+    # ---- 两轨共用
+    grade_thresholds: dict[str, float] = field(default_factory=dict)
+    land_year_anchors: list[list[float]] = field(default_factory=list)
+    cost_params: dict[str, float] = field(default_factory=dict)
+    legal_penalty: dict[str, float] = field(default_factory=dict)
+    location_params: dict[str, Any] = field(default_factory=dict)
+    ownership_params: dict[str, Any] = field(default_factory=dict)
+    tag_thresholds: dict[str, float] = field(default_factory=dict)
+    tag_enabled: dict[str, bool] = field(default_factory=dict)
+    default_rent_per_sqm_month: dict[str, float] = field(default_factory=dict)
     veto_rules: list[dict] = field(default_factory=list)
     disclaimer: str = ""
 
     # ---------------------------------------------------------------- 工具
-    def dim_max(self, code: str) -> float:
-        return float(self.weights.get(code, 0.0))
+    #: 旧代码用 RuleSet(...) 按位置传参的兼容顺序
+    _COMPAT_ORDER = (
+        "weights", "grade_thresholds", "price_anchors", "rent_anchors",
+        "land_year_anchors", "cost_params", "legal_penalty", "location_params",
+        "ownership_params", "tag_thresholds", "tag_enabled",
+        "default_rent_per_sqm_month", "veto_rules", "disclaimer",
+    )
 
-    def total_weight(self) -> float:
+    def __post_init__(self) -> None:
+        # 债权权重缺省则继承物权结构（同名维度）以保证不等长配置也能跑
+        if not self.weights_debt:
+            self.weights_debt = dict(C.DEFAULT_WEIGHTS_DEBT)
+        if not self.clearance_anchors:
+            self.clearance_anchors = copy.deepcopy(C.DEFAULT_CLEARANCE_ANCHORS)
+        if not self.holding_cost_anchors:
+            self.holding_cost_anchors = copy.deepcopy(C.DEFAULT_HOLDING_COST_ANCHORS)
+        if not self.coverage_anchors:
+            self.coverage_anchors = copy.deepcopy(C.DEFAULT_COVERAGE_ANCHORS)
+        if not self.debt_rank_scores:
+            self.debt_rank_scores = copy.deepcopy(C.DEBT_RANK_SCORES)
+        if not self.debt_execution_scores:
+            self.debt_execution_scores = copy.deepcopy(C.DEBT_EXECUTION_SCORES)
+        if not self.debt_solvency_scores:
+            self.debt_solvency_scores = copy.deepcopy(C.DEBT_SOLVENCY_SCORES)
+        if not self.debt_doc_scores:
+            self.debt_doc_scores = copy.deepcopy(C.DEBT_DOC_SCORES)
+
+    @classmethod
+    def from_legacy(cls, **kwargs) -> "RuleSet":
+        """按旧版字段名构造（位置参数顺序见 _COMPAT_ORDER）。
+
+        旧版 RuleSet 用位置参数构造，新增字段插入中间会错位；
+        这里按名字映射，保证旧调用与新调用都能工作。
+        """
+        mapped: dict[str, Any] = {}
+        for i, (name, value) in enumerate(zip(cls._COMPAT_ORDER, kwargs.get("args", ()))):
+            mapped[name] = value
+        mapped.update(kwargs.get("kwargs", {}))
+        return cls(**mapped)
+
+    def weights_for(self, asset_class: str) -> dict[str, float]:
+        """按资产类别取权重表。未知类别回落物权（从严不适用，宁可给全权重）。"""
+        return self.weights_debt if (asset_class or "").lower() == "debt" else self.weights
+
+    def dim_max(self, code: str, asset_class: str = "property") -> float:
+        return float(self.weights_for(asset_class).get(code, 0.0))
+
+    def total_weight(self, asset_class: str = "property") -> float:
+        return float(sum(self.weights_for(asset_class).values()))
+
+    # 兼容旧调用名
+    def property_weight_total(self) -> float:
         return float(sum(self.weights.values()))
 
-    def to_snapshot(self) -> dict:
-        """写入 ScoreHistory.params_snapshot 的可序列化快照。"""
-        return {
-            "weights": self.weights,
+    def debt_weight_total(self) -> float:
+        return float(sum(self.weights_debt.values()))
+
+    def to_snapshot(self, asset_class: str | None = None) -> dict:
+        """写入 ScoreHistory.params_snapshot 的可序列化快照。
+
+        asset_class 给定时只导出该轨道权重，避免快照里混入无关参数导致
+        事后复核时误以为另一套规则也参与了本次评分。
+        """
+        snap: dict[str, Any] = {
             "grade_thresholds": self.grade_thresholds,
-            "price_anchors": self.price_anchors,
-            "rent_anchors": self.rent_anchors,
-            "land_year_anchors": self.land_year_anchors,
             "cost_params": self.cost_params,
             "legal_penalty": self.legal_penalty,
             "location_params": self.location_params,
@@ -91,16 +158,36 @@ class RuleSet:
             "veto_rules": [
                 {k: r.get(k) for k in
                  ("code", "name", "enabled", "keyword_enabled",
-                  "field_conditions", "keywords")}
+                  "applies_to", "action", "field_conditions", "keywords")}
                 for r in self.veto_rules
             ],
         }
+        if asset_class == "debt":
+            snap["weights"] = self.weights_debt
+            snap["coverage_anchors"] = self.coverage_anchors
+            snap["debt_rank_scores"] = self.debt_rank_scores
+            snap["debt_execution_scores"] = self.debt_execution_scores
+            snap["debt_solvency_scores"] = self.debt_solvency_scores
+            snap["debt_doc_scores"] = self.debt_doc_scores
+        else:
+            snap["weights"] = self.weights
+            snap["price_anchors"] = self.price_anchors
+            snap["rent_anchors"] = self.rent_anchors
+            snap["clearance_anchors"] = self.clearance_anchors
+            snap["holding_cost_anchors"] = self.holding_cost_anchors
+            snap["land_year_anchors"] = self.land_year_anchors
+        return snap
 
 
 def _cfg(db: Session, key: str) -> Any:
+    """读配置。若新键未写入，回落到旧键名（LEGACY_CONFIG_ALIASES）。"""
     from app.models import SysConfig
 
     row = db.get(SysConfig, key)
+    if row is None:
+        legacy = C.LEGACY_CONFIG_ALIASES.get(key)
+        if legacy:
+            row = db.get(SysConfig, legacy)
     return row.value if row else None
 
 
@@ -135,15 +222,21 @@ def _as_anchors(value: Any, default: list) -> list[list[float]]:
 
 
 def load_ruleset(db: Session) -> RuleSet:
-    """从数据库装载全量参数；任何缺失键回落出厂默认。"""
+    """从数据库装载全量参数；任何缺失键回落出厂默认。双轨制版本。"""
     from app.config import DEFAULT_DISCLAIMER
     from app.models import VetoRule
 
-    weights = _as_dict(_cfg(db, "weights"), C.DEFAULT_WEIGHTS)
-    # 权重必须为正数，否则整体归零会掩盖配置错误
-    weights = {k: max(0.0, float(v)) for k, v in weights.items() if k in C.DEFAULT_WEIGHTS}
-    for k, v in C.DEFAULT_WEIGHTS.items():
+    weights = _as_dict(_cfg(db, "weights_property"), C.DEFAULT_WEIGHTS_PROPERTY)
+    weights = {k: max(0.0, float(v)) for k, v in weights.items()
+               if k in C.DEFAULT_WEIGHTS_PROPERTY}
+    for k, v in C.DEFAULT_WEIGHTS_PROPERTY.items():
         weights.setdefault(k, v)
+
+    weights_debt = _as_dict(_cfg(db, "weights_debt"), C.DEFAULT_WEIGHTS_DEBT)
+    weights_debt = {k: max(0.0, float(v)) for k, v in weights_debt.items()
+                    if k in C.DEFAULT_WEIGHTS_DEBT}
+    for k, v in C.DEFAULT_WEIGHTS_DEBT.items():
+        weights_debt.setdefault(k, v)
 
     grade_thresholds = _as_dict(_cfg(db, "grade_thresholds"), C.DEFAULT_GRADE_THRESHOLDS)
 
@@ -157,6 +250,8 @@ def load_ruleset(db: Session) -> RuleSet:
             "priority": r.priority,
             "enabled": bool(r.enabled),
             "keyword_enabled": bool(r.keyword_enabled),
+            "applies_to": getattr(r, "applies_to", "property") or "property",
+            "action": getattr(r, "action", "veto") or "veto",
             "description": r.description or "",
             "field_conditions": r.field_conditions or [],
             "keywords": r.keywords or [],
@@ -170,12 +265,25 @@ def load_ruleset(db: Session) -> RuleSet:
 
     return RuleSet(
         weights=weights,
+        weights_debt=weights_debt,
         grade_thresholds={
             "A": float(grade_thresholds.get("A", 80.0)),
             "B": float(grade_thresholds.get("B", 60.0)),
         },
         price_anchors=_as_anchors(_cfg(db, "price_anchors"), C.DEFAULT_PRICE_ANCHORS),
         rent_anchors=_as_anchors(_cfg(db, "rent_anchors"), C.DEFAULT_RENT_ANCHORS),
+        clearance_anchors=_as_anchors(
+            _cfg(db, "clearance_anchors"), C.DEFAULT_CLEARANCE_ANCHORS),
+        holding_cost_anchors=_as_anchors(
+            _cfg(db, "holding_cost_anchors"), C.DEFAULT_HOLDING_COST_ANCHORS),
+        coverage_anchors=_as_anchors(
+            _cfg(db, "coverage_anchors"), C.DEFAULT_COVERAGE_ANCHORS),
+        debt_rank_scores=_as_dict(_cfg(db, "debt_rank_scores"), C.DEBT_RANK_SCORES),
+        debt_execution_scores=_as_dict(
+            _cfg(db, "debt_execution_scores"), C.DEBT_EXECUTION_SCORES),
+        debt_solvency_scores=_as_dict(
+            _cfg(db, "debt_solvency_scores"), C.DEBT_SOLVENCY_SCORES),
+        debt_doc_scores=_as_dict(_cfg(db, "debt_doc_scores"), C.DEBT_DOC_SCORES),
         land_year_anchors=_as_anchors(
             _cfg(db, "land_year_anchors"), C.DEFAULT_LAND_YEAR_ANCHORS),
         cost_params=_as_dict(_cfg(db, "cost_params"), C.DEFAULT_COST_PARAMS),

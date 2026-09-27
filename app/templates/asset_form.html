@@ -25,12 +25,13 @@
   {% if asset %}<input type="hidden" name="asset_id" value="{{ asset.id }}">{% endif %}
 
   {% for sec in sections %}
-  <div class="panel">
+  <div class="panel" data-track-group="{{ sec.group }}">
     <div class="panel-head"><h3>{{ sec.group }}</h3></div>
     <div class="panel-body">
       <div class="field-grid">
         {% for f in sec.fields %}
-        <div class="field {{ 'span2' if f.span == 2 else '' }}">
+        <div class="field {{ 'span2' if f.span == 2 else '' }}"
+             {% if f.track %}data-track="{{ f.track }}"{% endif %}>
           <label for="f_{{ f.name }}">{{ f.label }}{% if f.required %} *{% endif %}</label>
 
           {% if f.type == 'select' %}
@@ -101,11 +102,57 @@
         {% endif %}
       </div>
       <p class="hint mt12">
-        提示：一票否决模块优先于量化评分。命中任意否决规则时，该标的直接判定 0 分、C 类淘汰，
-        不参与五维打分 —— 这是 PRD 模块2 的硬性要求。
+        提示：一票否决模块优先于量化评分。物权标的命中 V1/V4/V5 时直接判定 0 分、C 类淘汰；
+        <b>债权标的仅 V6（不可转让 / 已过时效）可一票否决</b>，V2 清场风险与 V3 大额欠费
+        按业务要求降级为重点扣分项，可压价对冲而不硬淘汰。
       </p>
     </div>
   </div>
 </form>
+
+<script>
+(function () {
+  // 按所选资产类别显示/隐藏字段组。后端一次性渲染全部字段，
+  // 前端只负责"看哪个" —— 表单提交仍带全部字段，解析逻辑无需分支。
+  var CLASS_SEL = 'f_asset_class';
+
+  function currentTrack() {
+    var el = document.getElementById(CLASS_SEL);
+    return el && el.value === 'debt' ? 'debt' : 'property';
+  }
+
+  function applyTrack() {
+    var track = currentTrack();
+    document.querySelectorAll('[data-track]').forEach(function (node) {
+      var want = node.getAttribute('data-track');
+      var show = (want === 'class') || (want === track);
+      node.style.display = show ? '' : 'none';
+    });
+    // 整组都是另一轨的 section 就整组隐藏（例如"债权信息"在物权下隐藏）
+    document.querySelectorAll('.panel[data-track-group]').forEach(function (panel) {
+      var tracked = panel.querySelectorAll('[data-track]');
+      if (!tracked.length) { return; }
+      var anyShown = false;
+      tracked.forEach(function (n) {
+        if (n.getAttribute('data-track') === 'class' ||
+            n.getAttribute('data-track') === track) { anyShown = true; }
+      });
+      // 只隐藏"该组内全部字段都属于另一轨"的组，避免误藏通用字段
+      var allOther = true;
+      tracked.forEach(function (n) {
+        var w = n.getAttribute('data-track');
+        if (w === 'class' || w === track) { allOther = false; }
+      });
+      panel.style.display = (allOther && !anyShown) ? 'none' : '';
+    });
+  }
+
+  var sel = document.getElementById(CLASS_SEL);
+  if (sel) {
+    sel.addEventListener('change', applyTrack);
+    applyTrack();
+  }
+})();
+</script>
 
 {% endblock %}

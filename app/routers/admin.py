@@ -55,25 +55,33 @@ def _set_config(db: Session, key: str, value) -> None:
 
 # ==================================================================== 参数元数据
 SCALAR_GROUPS: list[dict] = [
-    {"key": "weights", "label": "五维评分权重", "unit": "分", "step": "1",
-     "desc": "五个维度权重之和即总分满分，出厂合计 100 分。调整后建议执行一次全量重算。",
-     "fields": [(k, C.DIMENSION_LABELS[k]) for k in C.DEFAULT_WEIGHTS]},
+    {"key": "weights_property", "label": "物权 · 五维评分权重", "unit": "分", "step": "1",
+     "track": "property",
+     "desc": "物权轨道五维权重之和即满分，出厂合计 100 分（评估基准 30 / 清场占有 30 / "
+             "持有成本 15 / 租金 15 / 区位 10）。调整后建议执行一次全量重算。",
+     "fields": [(k, C.DIMENSION_LABELS_PROPERTY[k]) for k in C.DEFAULT_WEIGHTS_PROPERTY]},
+    {"key": "weights_debt", "label": "债权 · 五维评分权重", "unit": "分", "step": "1",
+     "track": "debt",
+     "desc": "债权轨道五维权重之和即满分，出厂合计 100 分（覆盖倍数 30 / 顺位 25 / "
+             "执行进展 20 / 偿付能力 15 / 凭证 10）。与物权权重完全独立。",
+     "fields": [(k, C.DIMENSION_LABELS_DEBT[k]) for k in C.DEFAULT_WEIGHTS_DEBT]},
     {"key": "grade_thresholds", "label": "A / B / C 分级阈值", "unit": "分", "step": "1",
-     "desc": "得分 ≥ A 阈值 → A 类；≥ B 阈值 → B 类；其余 → C 类。",
+     "desc": "得分 ≥ A 阈值 → A 类；≥ B 阈值 → B 类；其余 → C 类。两条轨道共用同一套阈值。",
      "fields": [("A", "A 类下限"), ("B", "B 类下限")]},
     {"key": "cost_params", "label": "租金 / 税费 / 损耗系数", "unit": "", "step": "0.005",
+     "track": "property",
      "desc": "净租售比测算的全部系数。费率类填小数（0.12 = 12%）。",
      "fields": [("property_tax_rate", "房产税率（从租计征）"),
+                ("rent_vat_rate", "租金开票税点（增值税及附加）"),
                 ("land_use_tax_per_sqm", "土地使用税（元/㎡/年）"),
                 ("maintenance_ratio", "修缮运维费率"),
                 ("vacancy_ratio", "空置损耗预留率"),
-                ("deal_value_ratio", "成交预估价值系数（× 起拍价）")]},
-    {"key": "legal_penalty", "label": "产权司法风险扣分系数", "unit": "分", "step": "0.5",
-     "desc": "每项按数量扣分并封顶，累计扣分以 20 分制为基准，再按当前权重折算。",
-     "fields": [("mortgage_per", "抵押 · 每笔扣分"), ("mortgage_cap", "抵押 · 封顶"),
-                ("seal_per", "查封 · 每轮扣分"), ("seal_cap", "查封 · 封顶"),
-                ("lawsuit_per", "涉诉 · 每件扣分"), ("lawsuit_cap", "涉诉 · 封顶"),
-                ("dispute_per", "纠纷频次 · 每次扣分"), ("dispute_cap", "纠纷频次 · 封顶")]},
+                ("deal_value_ratio", "成交预估价值系数（× 起拍价）"),
+                ("appraisal_weight", "双基准中司法评估价权重"),
+                ("benchmark_divergence_limit", "双基准分歧容许线"),
+                ("divergence_confidence_factor", "分歧/陈旧时的置信度折算系数"),
+                ("appraisal_stale_months", "估值陈旧线（月）"),
+                ("market_min_comp_count", "市场可比案例最少宗数")]},
     {"key": "tag_thresholds", "label": "标签触发阈值", "unit": "", "step": "0.01",
      "desc": "折价率/租售比类填小数（0.30 = 30%），数量类填整数，金额填元。",
      "fields": [("high_discount", "高折价线"), ("low_discount", "低折价线"),
@@ -81,30 +89,70 @@ SCALAR_GROUPS: list[dict] = [
                 ("seal_many", "多轮查封起点"), ("mortgage_many", "多抵押起点"),
                 ("lawsuit_many", "涉诉较多起点"), ("land_years_short", "年限不足线"),
                 ("deadline_days", "临近截止天数"), ("turnover_poor", "流动性差线"),
-                ("big_arrears", "大额欠费线（元）")]},
+                ("big_arrears", "大额欠费线（元）"),
+                ("holding_cost_low_rate", "持有成本维度得分率低线"),
+                ("appraisal_stale_months", "估值陈旧线（月）"),
+                ("benchmark_divergent", "双基准分歧线"),
+                ("market_min_comp", "可比案例最少宗数"),
+                ("clearance_hard_level", "清场困难等级线"),
+                ("coverage_safe", "覆盖倍数安全线"),
+                ("coverage_short", "覆盖倍数不足线"),
+                ("creditor_many", "竞争债权人过多线")]},
     {"key": "default_rent_per_sqm_month", "label": "各资产类型租金兜底值", "unit": "元/㎡/月",
-     "step": "0.5",
+     "step": "0.5", "track": "property",
      "desc": "未匹配到区域基准时使用。",
      "fields": [(k, v) for k, v in C.ASSET_TYPES.items()]},
 ]
 
 ANCHOR_GROUPS: list[dict] = [
-    {"key": "price_anchors", "label": "价格折价打分锚点",
-     "desc": "格式 [[输入值, 得分], ...]，按输入值升序，区间内线性插值。输入值为折价率小数。",
+    {"key": "price_anchors", "label": "物权 · 评估基准打分锚点",
+     "track": "property",
+     "desc": "格式 [[输入值, 得分], ...]，按输入值升序，区间内线性插值。"
+             "输入值为综合折价率小数（双基准交叉验证后的加权折价率）。",
      "dimension": "price"},
-    {"key": "rent_anchors", "label": "净租售比打分锚点",
+    {"key": "clearance_anchors", "label": "物权 · 清场与占有打分锚点",
+     "track": "property",
+     "desc": "输入值为清场难度等级 0~4（0 空置无占用 … 4 无法清场）。出厂：0 级满分 30，4 级 0 分。",
+     "dimension": "clearance"},
+    {"key": "holding_cost_anchors", "label": "物权 · 持有成本打分锚点",
+     "track": "property",
+     "desc": "输入值为成本占比（欠费+过户税费+补缴 ÷ 成交预估价值）。占比越高分越低。",
+     "dimension": "holding_cost"},
+    {"key": "rent_anchors", "label": "物权 · 净租售比打分锚点",
+     "track": "property",
      "desc": "输入值为净租售比小数。出厂设置：≥5%（0.05）满分 30，4%（0.04）为 18 分并触发大幅扣分。",
      "dimension": "rent"},
+    {"key": "coverage_anchors", "label": "债权 · 覆盖倍数打分锚点",
+     "track": "debt",
+     "desc": "输入值为抵押物覆盖倍数（抵押物价值 ÷ 债权本息）。"
+             "出厂：1.0 倍仅 12 分，1.0 以下断崖（覆盖不足本金回收堪忧），3 倍满分 30。",
+     "dimension": "coverage"},
     {"key": "land_year_anchors", "label": "土地剩余年限打分锚点",
-     "desc": "输入值为剩余年限（年），得分上限对应权属合规维度的「土地剩余年限」子项。",
-     "dimension": "ownership"},
+     "track": "property",
+     "desc": "输入值为剩余年限（年）。土地年限子项已并入清场与占有维度参考。",
+     "dimension": "clearance"},
 ]
 
 JSON_GROUPS: list[dict] = [
     {"key": "location_params", "label": "区位流通性子项分值",
+     "track": "property",
      "desc": "城市能级分值表 + 产业配套/出租需求/转手成交率的子项满分。"},
     {"key": "ownership_params", "label": "权属合规补充子项分值",
+     "track": "property",
      "desc": "土地剩余年限满分、无隐性共有产权得分、合规等级分值表。"},
+    {"key": "debt_rank_scores", "label": "债权 · 担保顺位分值表",
+     "track": "debt",
+     "desc": "担保顺位 → 得分映射。key：first / second / other / none / unknown。"},
+    {"key": "debt_execution_scores", "label": "债权 · 执行进展分值表",
+     "track": "debt",
+     "desc": "执行阶段 → 得分映射。key：settled / auctioning / executing / judged / "
+             "litigating / failed / unknown。"},
+    {"key": "debt_solvency_scores", "label": "债权 · 债务人偿付能力分值表",
+     "track": "debt",
+     "desc": "偿付能力 → 得分映射。key：good / fair / poor / bankrupt / unknown。"},
+    {"key": "debt_doc_scores", "label": "债权 · 凭证完整性分值表",
+     "track": "debt",
+     "desc": "凭证等级 → 得分映射。key：full / partial / weak / unknown。"},
 ]
 
 
@@ -114,21 +162,28 @@ def config_page(request: Request, db: Session = Depends(get_db),
                 user=Depends(require_login)):
     ruleset = load_ruleset(db)
     values = {
-        "weights": ruleset.weights,
+        "weights_property": ruleset.weights,
+        "weights_debt": ruleset.weights_debt,
         "grade_thresholds": ruleset.grade_thresholds,
         "cost_params": ruleset.cost_params,
-        "legal_penalty": ruleset.legal_penalty,
         "tag_thresholds": ruleset.tag_thresholds,
         "default_rent_per_sqm_month": ruleset.default_rent_per_sqm_month,
     }
     anchors = {
         "price_anchors": ruleset.price_anchors,
+        "clearance_anchors": ruleset.clearance_anchors,
+        "holding_cost_anchors": ruleset.holding_cost_anchors,
         "rent_anchors": ruleset.rent_anchors,
+        "coverage_anchors": ruleset.coverage_anchors,
         "land_year_anchors": ruleset.land_year_anchors,
     }
     json_values = {
         "location_params": ruleset.location_params,
         "ownership_params": ruleset.ownership_params,
+        "debt_rank_scores": ruleset.debt_rank_scores,
+        "debt_execution_scores": ruleset.debt_execution_scores,
+        "debt_solvency_scores": ruleset.debt_solvency_scores,
+        "debt_doc_scores": ruleset.debt_doc_scores,
     }
     tag_states = ruleset.tag_enabled
 
@@ -139,7 +194,8 @@ def config_page(request: Request, db: Session = Depends(get_db),
                   json_values=json_values, tag_registry=C.TAG_REGISTRY,
                   tag_states=tag_states, disclaimer=ruleset.disclaimer,
                   can_edit=can_edit,
-                  weights_total=sum(ruleset.weights.values()))
+                  property_weight_total=ruleset.property_weight_total(),
+                  debt_weight_total=ruleset.debt_weight_total())
 
 
 @router.post("/config")

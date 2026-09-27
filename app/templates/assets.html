@@ -44,6 +44,15 @@
         </select>
       </div>
       <div class="f">
+        <label>评分轨道</label>
+        <select name="asset_class">
+          <option value="">全部</option>
+          {% for k, v in ASSET_CLASSES.items() %}
+          <option value="{{ k }}" {{ 'selected' if asset_class == k else '' }}>{{ v }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="f">
         <label>资产类型</label>
         <select name="asset_type">
           <option value="">全部</option>
@@ -100,11 +109,12 @@
         <tr>
           <th style="width:44px">等级</th>
           <th>标的</th>
+          <th class="nowrap">轨道</th>
           <th class="nowrap">地区</th>
           <th class="nowrap">类型</th>
           <th class="num">起拍价</th>
-          <th class="num">折价率</th>
-          <th class="num">净租售比</th>
+          <th class="num">折价率 / 覆盖倍数</th>
+          <th class="num">净租售比 / 顺位</th>
           <th class="num">得分</th>
           <th class="nowrap">标签</th>
           <th class="nowrap">状态</th>
@@ -125,11 +135,27 @@
               {% if a.area_sqm %} · {{ a.area_sqm | num(0) }} ㎡{% endif %}
             </div>
           </td>
+          <td class="nowrap">
+            {% if a.is_debt %}<span class="badge badge-debt">债权</span>
+            {% else %}<span class="badge badge-prop">物权</span>{% endif %}
+          </td>
           <td class="nowrap small">{{ a.city or '—' }}{{ a.district or '' }}</td>
           <td class="nowrap small">{{ ASSET_TYPES.get(a.asset_type, '—') }}</td>
           <td class="num nowrap">{{ a.start_price | money_short }}</td>
-          <td class="num">{{ a.discount_rate | pct(1) }}</td>
-          <td class="num">{{ (a.rent_detail or {}).get('net_rent_ratio') | pct(2) }}</td>
+          <td class="num">
+            {% if a.is_debt %}
+              {% if a.guarantee_coverage is not none %}{{ a.guarantee_coverage | num(2) }}×{% else %}—{% endif %}
+            {% else %}
+              {{ a.discount_rate | pct(1) }}
+            {% endif %}
+          </td>
+          <td class="num">
+            {% if a.is_debt %}
+              <span class="small">{{ GUARANTEE_RANKS.get(a.guarantee_rank, '—') }}</span>
+            {% else %}
+              {{ (a.rent_detail or {}).get('net_rent_ratio') | pct(2) }}
+            {% endif %}
+          </td>
           <td class="num">
             {% if a.status == 'vetoed' %}<span class="muted">否决</span>
             {% else %}<b>{{ a.total_score | num(1) }}</b>{% endif %}
@@ -152,7 +178,7 @@
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="11" class="tbl-empty">
+        <tr><td colspan="12" class="tbl-empty">
           没有符合条件的标的。可以先去 <a href="/crawl">采集管理</a> 跑一轮采集，
           或 <a href="/import">批量导入</a> 自己的数据。
         </td></tr>

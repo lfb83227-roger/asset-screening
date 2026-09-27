@@ -25,10 +25,16 @@ router = APIRouter(prefix="/assets", tags=["assets"])
 
 # ==================================================================== 表单声明
 # type: text | number | money | int | datetime | select | tri | textarea | ratio
+#
+# 双轨制：`asset_class` 决定走哪套评分引擎。表单一次性渲染全部字段，
+# 由前端 JS 按所选轨道显示/隐藏 —— 后端不做条件校验，
+# 因为"填了另一轨的字段"只是冗余，不影响本轨打分（引擎只读本轨字段）。
 FORM_SECTIONS: list[dict] = [
     {"group": "基础信息", "fields": [
         {"name": "title", "label": "标的名称", "type": "text", "span": 2,
          "required": True},
+        {"name": "asset_class", "label": "资产类别（决定评分轨道）", "type": "select",
+         "options": C.ASSET_CLASSES, "track": "class"},
         {"name": "asset_type", "label": "资产类型", "type": "select", "options": C.ASSET_TYPES},
         {"name": "source_platform", "label": "数据来源", "type": "select",
          "options": C.PLATFORMS},
@@ -47,6 +53,13 @@ FORM_SECTIONS: list[dict] = [
         {"name": "market_price", "label": "周边同类成交价(元)", "type": "money"},
         {"name": "deposit", "label": "保证金(元)", "type": "money"},
     ]},
+    {"group": "评估基准（物权·价格维度双基准交叉验证）", "fields": [
+        {"name": "appraisal_at", "label": "司法评估时点", "type": "datetime"},
+        {"name": "appraisal_refreshed_price", "label": "人工复评评估价(元)", "type": "money"},
+        {"name": "market_comp_source", "label": "市场可比价来源", "type": "text",
+         "placeholder": "链家 / 贝壳 / 中指等"},
+        {"name": "market_comp_count", "label": "可比案例样本数(宗)", "type": "int"},
+    ]},
     {"group": "挂牌信息", "fields": [
         {"name": "listed_at", "label": "挂牌时间", "type": "datetime"},
         {"name": "deadline_at", "label": "截止时间", "type": "datetime"},
@@ -55,16 +68,23 @@ FORM_SECTIONS: list[dict] = [
         {"name": "court", "label": "处置法院", "type": "text"},
         {"name": "case_no", "label": "案号", "type": "text"},
     ]},
-    {"group": "权属与合规", "fields": [
+    {"group": "权属与合规（物权）", "fields": [
         {"name": "land_nature", "label": "土地性质", "type": "select",
-         "options": C.LAND_NATURES},
-        {"name": "land_remaining_years", "label": "土地剩余年限(年)", "type": "number"},
+         "options": C.LAND_NATURES, "track": "property"},
+        {"name": "land_remaining_years", "label": "土地剩余年限(年)", "type": "number",
+         "track": "property"},
         {"name": "compliance_level", "label": "合规等级", "type": "select",
-         "options": C.COMPLIANCE_LEVELS},
-        {"name": "registration_ok", "label": "可否办理不动产登记", "type": "tri"},
-        {"name": "transfer_restricted", "label": "是否限制转让", "type": "tri"},
-        {"name": "can_supplement_procedure", "label": "划拨地可否补办手续", "type": "tri"},
-        {"name": "implicit_coownership", "label": "隐性共有产权提示", "type": "tri"},
+         "options": C.COMPLIANCE_LEVELS, "track": "property"},
+        {"name": "registration_ok", "label": "可否办理不动产登记", "type": "tri",
+         "track": "property"},
+        {"name": "transfer_restricted", "label": "是否限制转让", "type": "tri",
+         "track": "property"},
+        {"name": "can_supplement_procedure", "label": "划拨地可否补办手续", "type": "tri",
+         "track": "property"},
+        {"name": "implicit_coownership", "label": "隐性共有产权提示", "type": "tri",
+         "track": "property"},
+        {"name": "owner_is_company", "label": "产权人为企业（影响房产税）", "type": "tri",
+         "track": "property"},
     ]},
     {"group": "司法风险", "fields": [
         {"name": "mortgage_count", "label": "抵押数量", "type": "int"},
@@ -74,28 +94,67 @@ FORM_SECTIONS: list[dict] = [
         {"name": "co_ownership_dispute", "label": "共有产权无法确权", "type": "tri"},
         {"name": "irreversible_seal", "label": "不可解除的限制性查封", "type": "tri"},
     ]},
-    {"group": "占用与租赁", "fields": [
+    {"group": "占用与租赁（物权·清场与占有维度）", "fields": [
         {"name": "lease_status", "label": "租赁情况", "type": "select",
-         "options": C.LEASE_STATUSES},
-        {"name": "occupied", "label": "是否被占用", "type": "tri"},
-        {"name": "can_clear", "label": "可否清场", "type": "tri"},
-        {"name": "occupancy_note", "label": "占用说明", "type": "text", "span": 2},
+         "options": C.LEASE_STATUSES, "track": "property"},
+        {"name": "occupied", "label": "是否被占用", "type": "tri", "track": "property"},
+        {"name": "can_clear", "label": "可否清场", "type": "tri", "track": "property"},
+        {"name": "occupancy_note", "label": "占用说明", "type": "text", "span": 2,
+         "track": "property"},
         {"name": "scrap_status", "label": "使用状态", "type": "select",
-         "options": C.SCRAP_STATUSES},
+         "options": C.SCRAP_STATUSES, "track": "property"},
     ]},
-    {"group": "欠费情况（元）", "fields": [
-        {"name": "tax_owed", "label": "欠税", "type": "money"},
-        {"name": "land_idle_fee", "label": "土地闲置费", "type": "money"},
-        {"name": "construction_arrears", "label": "工程欠款", "type": "money"},
-        {"name": "property_fee_owed", "label": "物业欠费", "type": "money"},
+    {"group": "欠费情况（元·持有成本维度）", "fields": [
+        {"name": "tax_owed", "label": "欠税", "type": "money", "track": "property"},
+        {"name": "land_idle_fee", "label": "土地闲置费", "type": "money", "track": "property"},
+        {"name": "construction_arrears", "label": "工程欠款", "type": "money",
+         "track": "property"},
+        {"name": "property_fee_owed", "label": "物业欠费", "type": "money",
+         "track": "property"},
+        {"name": "utility_owed", "label": "水电燃气欠费", "type": "money",
+         "track": "property"},
+        {"name": "heating_owed", "label": "采暖费欠费", "type": "money",
+         "track": "property"},
+        {"name": "transfer_tax_estimate", "label": "过户税费预估", "type": "money",
+         "track": "property", "span": 2},
     ]},
-    {"group": "租金与区位（留空则取区域大数据均值）", "fields": [
-        {"name": "rent_per_sqm_month", "label": "租金(元/㎡/月)", "type": "number"},
-        {"name": "annual_gross_rent_override", "label": "年毛租金(元)", "type": "money"},
-        {"name": "city_tier", "label": "城市能级", "type": "select", "options": C.CITY_TIERS},
-        {"name": "industry_support_ratio", "label": "产业配套(0~100)", "type": "ratio"},
-        {"name": "rental_demand_ratio", "label": "出租需求(0~100)", "type": "ratio"},
-        {"name": "turnover_ratio", "label": "转手成交率(0~100)", "type": "ratio"},
+    {"group": "租金与区位（物权·留空则取区域大数据均值）", "fields": [
+        {"name": "rent_per_sqm_month", "label": "租金(元/㎡/月)", "type": "number",
+         "track": "property"},
+        {"name": "annual_gross_rent_override", "label": "年毛租金(元)", "type": "money",
+         "track": "property"},
+        {"name": "city_tier", "label": "城市能级", "type": "select", "options": C.CITY_TIERS,
+         "track": "property"},
+        {"name": "industry_support_ratio", "label": "产业配套(0~100)", "type": "ratio",
+         "track": "property"},
+        {"name": "rental_demand_ratio", "label": "出租需求(0~100)", "type": "ratio",
+         "track": "property"},
+        {"name": "turnover_ratio", "label": "转手成交率(0~100)", "type": "ratio",
+         "track": "property"},
+    ]},
+    {"group": "债权信息（债权轨道专用）", "fields": [
+        {"name": "debt_principal", "label": "债权本金(元)", "type": "money",
+         "track": "debt"},
+        {"name": "debt_interest", "label": "利息/违约金(元)", "type": "money",
+         "track": "debt"},
+        {"name": "collateral_value", "label": "抵押物评估价值(元)", "type": "money",
+         "track": "debt"},
+        {"name": "debt_start_price", "label": "债权转让起拍价(元)", "type": "money",
+         "track": "debt"},
+        {"name": "guarantee_rank", "label": "担保顺位", "type": "select",
+         "options": C.GUARANTEE_RANKS, "track": "debt"},
+        {"name": "execution_stage", "label": "执行进展", "type": "select",
+         "options": C.EXECUTION_STAGES, "track": "debt"},
+        {"name": "debtor_solvency", "label": "债务人偿付能力", "type": "select",
+         "options": C.DEBTOR_SOLVENCY, "track": "debt"},
+        {"name": "debt_doc_level", "label": "债权凭证完整性", "type": "select",
+         "options": C.DEBT_DOC_LEVELS, "track": "debt"},
+        {"name": "debt_transferable", "label": "债权可依法转让", "type": "tri",
+         "track": "debt"},
+        {"name": "debt_limitation_ok", "label": "诉讼时效有效", "type": "tri",
+         "track": "debt"},
+        {"name": "competing_claims", "label": "已知其他债权人数量", "type": "int",
+         "track": "debt"},
     ]},
     {"group": "公告原文（用于自动抽取字段，不覆盖上方已填值）", "fields": [
         {"name": "raw_text", "label": "公告原文", "type": "textarea", "span": 2},
@@ -154,10 +213,13 @@ def parse_form(form) -> tuple[dict, list[str]]:
         data.setdefault(name, 0)
         if data[name] is None:
             data[name] = 0
-    for name in ("lease_status", "land_nature", "auction_round", "scrap_status",
-                 "compliance_level"):
-        data.setdefault(name, "unknown" if name != "scrap_status" else "normal")
+    for name in ("lease_status", "land_nature", "auction_round"):
+        data.setdefault(name, "unknown")
+    for name in ("guarantee_rank", "execution_stage", "debtor_solvency", "debt_doc_level"):
+        data.setdefault(name, "unknown")
+    data.setdefault("scrap_status", "normal")
     data.setdefault("compliance_level", "full")
+    data.setdefault("asset_class", "property")
     data.setdefault("asset_type", "other")
     data.setdefault("source_platform", "manual")
     return data, errors
@@ -184,11 +246,16 @@ def _form_values(asset: Asset | None) -> dict:
     if not asset:
         values.setdefault("source_platform", "manual")
         values.setdefault("asset_type", "other")
+        values.setdefault("asset_class", "property")
         values.setdefault("land_nature", "unknown")
         values.setdefault("lease_status", "unknown")
         values.setdefault("auction_round", "unknown")
         values.setdefault("scrap_status", "normal")
         values.setdefault("compliance_level", "full")
+        values.setdefault("guarantee_rank", "unknown")
+        values.setdefault("execution_stage", "unknown")
+        values.setdefault("debtor_solvency", "unknown")
+        values.setdefault("debt_doc_level", "unknown")
     return values
 
 
@@ -210,6 +277,7 @@ def asset_list(request: Request, db: Session = Depends(get_db),
     grade = qp.get("grade") or ""
     status = qp.get("status") or ""
     asset_type = qp.get("asset_type") or ""
+    asset_class = qp.get("asset_class") or ""
     city = (qp.get("city") or "").strip()
     platform = qp.get("platform") or ""
     min_score = qp.get("min_score") or ""
@@ -229,6 +297,8 @@ def asset_list(request: Request, db: Session = Depends(get_db),
         stmt = stmt.where(Asset.status == status)
     if asset_type:
         stmt = stmt.where(Asset.asset_type == asset_type)
+    if asset_class:
+        stmt = stmt.where(Asset.asset_class == asset_class)
     if city:
         stmt = stmt.where(Asset.city.like(f"%{city}%"))
     if platform:
@@ -263,6 +333,7 @@ def asset_list(request: Request, db: Session = Depends(get_db),
         pages=max(1, (total + size - 1) // size),
         q=q, grade=grade, status=status, asset_type=asset_type, city=city,
         platform=platform, min_score=min_score, max_score=max_score, sort=sort,
+        asset_class=asset_class,
         cities=cities, sort_options={k: v[0] for k, v in SORT_OPTIONS.items()},
         dist=dist,
         query_string=_build_query_string(qp, drop=("page",)),

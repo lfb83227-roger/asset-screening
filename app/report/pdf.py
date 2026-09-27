@@ -4,9 +4,12 @@
   1. 标的基础信息、挂牌信息
   2. AI 综合得分、标的等级
   3. 五大维度评分明细
-  4. 净租售比测算明细
+  4. 净租售比测算明细（仅物权轨道；债权轨道展示债权信息）
   5. 风险标签、优势标签、系统初筛结论
   6. 固定合规免责声明（强制自带，不可关闭）
+
+双轨制：物权报告展示「权属/司法/占用/欠费」，债权报告展示「担保顺位/覆盖倍数/
+执行进展/债务人偿付能力/凭证」，其余章节（得分、维度、标签、结论）两条轨道共用。
 
 中文字体：优先使用系统 TTF（Windows 微软雅黑 / 黑体），其次 reportlab 内置
 CID 字体 STSong-Light，最后才退回 Helvetica。三级降级保证任何机器都能出报告。
@@ -252,7 +255,8 @@ def build_pdf(asset, ruleset, operator: str = "", generated_at: datetime | None 
     story.append(Paragraph("不良资产 AI 智能筛选报告", st["title"]))
     story.append(Paragraph(
         f"报告编号 {report_no}　|　生成时间 {now:%Y-%m-%d %H:%M}　|　"
-        f"评估引擎 {ENGINE_VERSION}"
+        f"评估引擎 {ENGINE_VERSION}　|　评分轨道 "
+        f"{C.ASSET_CLASSES.get(asset.asset_class or 'property', '物权') if hasattr(asset, 'asset_class') else '物权'}"
         + (f"　|　导出人 {operator}" if operator else ""), st["subtitle"]))
     story.append(Spacer(1, 4))
     story.append(HRFlowable(width="100%", thickness=1, color=LINE))
@@ -268,6 +272,7 @@ def build_pdf(asset, ruleset, operator: str = "", generated_at: datetime | None 
     # ---------------------------------------------------------- 2. 基础信息
     story.append(Paragraph("二、标的基础信息与挂牌信息", st["h1"]))
     base_rows = [
+        ("评分轨道", _enum_name(C.ASSET_CLASSES, asset.asset_class or "property")),
         ("数据来源", C.PLATFORMS.get(asset.source_platform, asset.source_platform or "—")),
         ("平台标的编号", _text(asset.external_id)),
         ("资产类型", _enum_name(C.ASSET_TYPES, asset.asset_type)),
@@ -289,39 +294,71 @@ def build_pdf(asset, ruleset, operator: str = "", generated_at: datetime | None 
     ]
     story.append(_kv_table(base_rows, st, cols=2))
 
-    story.append(Paragraph("三、权属、司法与占用情况", st["h1"]))
-    own_rows = [
-        ("土地性质", _enum_name(C.LAND_NATURES, asset.land_nature)),
-        ("土地剩余年限", f"{asset.land_remaining_years:g} 年"
-         if asset.land_remaining_years is not None else "未载明"),
-        ("可否办理不动产登记",
-         "是" if asset.registration_ok else ("否" if asset.registration_ok is False else "未载明")),
-        ("是否限制转让",
-         "是" if asset.transfer_restricted else ("否" if asset.transfer_restricted is False else "未载明")),
-        ("合规等级", _enum_name(C.COMPLIANCE_LEVELS, asset.compliance_level)),
-        ("抵押数量", f"{int(asset.mortgage_count or 0)} 笔"),
-        ("轮候查封数量", f"{int(asset.seal_count or 0)} 轮"),
-        ("涉诉案件数量", f"{int(asset.lawsuit_count or 0)} 件"),
-        ("司法纠纷频次", f"{int(asset.dispute_freq or 0)} 次"),
-        ("租赁情况", _enum_name(C.LEASE_STATUSES, asset.lease_status)),
-        ("占用情况", "被占用" if asset.occupied else
-         ("未占用" if asset.occupied is False else "未载明")),
-        ("可否清场", "可" if asset.can_clear else
-         ("不可" if asset.can_clear is False else "未载明")),
-        ("欠税", _money(asset.tax_owed)),
-        ("土地闲置费", _money(asset.land_idle_fee)),
-        ("工程欠款", _money(asset.construction_arrears)),
-        ("物业欠费", _money(asset.property_fee_owed)),
-        ("欠费合计", _money(asset.total_arrears)),
-    ]
-    story.append(_kv_table(own_rows, st, cols=2))
+    if asset.is_debt:
+        # 债权轨道：用「债权信息」替代「权属/占用」，因为债务人偿付能力、
+        # 担保顺位这些才是债权买方真正关心的信息。
+        story.append(Paragraph("三、债权信息（债权轨道）", st["h1"]))
+        debt_rows = [
+            ("债权本金", _money(asset.debt_principal)),
+            ("利息/违约金", _money(asset.debt_interest)),
+            ("债权本息合计", _money(asset.debt_total_claim)),
+            ("抵押物评估价值", _money(asset.collateral_value)),
+            ("抵押物覆盖倍数",
+             f"{asset.guarantee_coverage:.2f} 倍"
+             if asset.guarantee_coverage is not None else "—"),
+            ("债权转让起拍价", _money(asset.debt_start_price)),
+            ("担保顺位", _enum_name(C.GUARANTEE_RANKS, asset.guarantee_rank)),
+            ("执行进展", _enum_name(C.EXECUTION_STAGES, asset.execution_stage)),
+            ("债务人偿付能力", _enum_name(C.DEBTOR_SOLVENCY, asset.debtor_solvency)),
+            ("债权凭证完整性", _enum_name(C.DEBT_DOC_LEVELS, asset.debt_doc_level)),
+            ("债权可否依法转让",
+             "是" if asset.debt_transferable else
+             ("否" if asset.debt_transferable is False else "未载明")),
+            ("诉讼时效是否有效",
+             "是" if asset.debt_limitation_ok else
+             ("否" if asset.debt_limitation_ok is False else "未载明")),
+            ("已知其他债权人数量", f"{int(asset.competing_claims or 0)} 家"),
+        ]
+        story.append(_kv_table(debt_rows, st, cols=2))
+    else:
+        story.append(Paragraph("三、权属、司法与占用情况", st["h1"]))
+        own_rows = [
+            ("土地性质", _enum_name(C.LAND_NATURES, asset.land_nature)),
+            ("土地剩余年限", f"{asset.land_remaining_years:g} 年"
+             if asset.land_remaining_years is not None else "未载明"),
+            ("可否办理不动产登记",
+             "是" if asset.registration_ok else ("否" if asset.registration_ok is False else "未载明")),
+            ("是否限制转让",
+             "是" if asset.transfer_restricted else ("否" if asset.transfer_restricted is False else "未载明")),
+            ("合规等级", _enum_name(C.COMPLIANCE_LEVELS, asset.compliance_level)),
+            ("抵押数量", f"{int(asset.mortgage_count or 0)} 笔"),
+            ("轮候查封数量", f"{int(asset.seal_count or 0)} 轮"),
+            ("涉诉案件数量", f"{int(asset.lawsuit_count or 0)} 件"),
+            ("司法纠纷频次", f"{int(asset.dispute_freq or 0)} 次"),
+            ("租赁情况", _enum_name(C.LEASE_STATUSES, asset.lease_status)),
+            ("占用情况", "被占用" if asset.occupied else
+             ("未占用" if asset.occupied is False else "未载明")),
+            ("可否清场", "可" if asset.can_clear else
+             ("不可" if asset.can_clear is False else "未载明")),
+            ("欠税", _money(asset.tax_owed)),
+            ("土地闲置费", _money(asset.land_idle_fee)),
+            ("工程欠款", _money(asset.construction_arrears)),
+            ("物业欠费", _money(asset.property_fee_owed)),
+            ("水电燃气欠费", _money(getattr(asset, "utility_owed", 0))),
+            ("采暖费欠费", _money(getattr(asset, "heating_owed", 0))),
+            ("欠费合计", _money(asset.total_arrears)),
+        ]
+        story.append(_kv_table(own_rows, st, cols=2))
 
-    # ---------------------------------------------------------- 3. 一票否决
-    veto_hits = asset.veto_hits or []
-    if veto_hits:
+    # ---------------------------------------------------------- 3. 一票否决 / 重点扣分
+    all_hits = asset.veto_hits or []
+    veto_only = [h for h in all_hits if h.get("action", "veto") != "penalty"]
+    penalty_only = [h for h in all_hits if h.get("action", "veto") == "penalty"]
+
+    if veto_only:
         story.append(Paragraph("四、一票否决命中情况（最高优先级）", st["h1"]))
         rows = []
-        for h in veto_hits:
+        for h in veto_only:
             rows.append([f"{h.get('code', '')} {h.get('name', '')}",
                          "<br/>".join(h.get("evidences") or []) or "—"])
         story.append(_grid_table(["否决规则", "命中依据"], rows, st))
@@ -329,6 +366,17 @@ def build_pdf(asset, ruleset, operator: str = "", generated_at: datetime | None 
         story.append(Paragraph(
             "命中一票否决的标的直接判定为 0 分、C 类淘汰，不参与五维量化打分。",
             st["small"]))
+    if penalty_only:
+        story.append(Paragraph("四、重点扣分项（已计入量化打分）", st["h1"]))
+        rows = []
+        for h in penalty_only:
+            rows.append([f"{h.get('code', '')} {h.get('name', '')}",
+                         "<br/>".join(h.get("evidences") or []) or "—"])
+        story.append(_grid_table(["扣分规则", "命中依据"], rows, st))
+        story.append(Spacer(1, 4))
+        story.append(Paragraph(
+            "此类风险按业务要求降级为重点扣分项（相应维度已额外重罚），"
+            "可压价对冲，不直接淘汰。", st["small"]))
     story.append(PageBreak())
 
     # ---------------------------------------------------------- 4. 五维明细
@@ -386,44 +434,46 @@ def build_pdf(asset, ruleset, operator: str = "", generated_at: datetime | None 
 
     story.append(PageBreak())
 
-    # ---------------------------------------------------------- 5. 净租售比
-    story.append(Paragraph("六、净租售比测算明细", st["h1"]))
-    rd = asset.rent_detail or {}
-    story.append(Paragraph(rd.get("formula", ""), st["small"]))
-    story.append(Spacer(1, 4))
-
-    if not rd.get("computable"):
-        story.append(Paragraph(
-            f"<font color='#b42318'><b>无法完成测算</b></font>："
-            f"{_text(rd.get('reason'), '数据不足')}。"
-            f"该维度按 0 分计，补充起拍价 / 面积 / 租金数据后可重新评估。",
-            st["body"]))
-    else:
-        rows = []
-        for line in rd.get("lines", []):
-            rows.append([line.get("sign", ""), line.get("name", ""),
-                         _money(line.get("amount")), line.get("note", "")])
-        story.append(_grid_table(["", "项目", "金额", "说明"], rows, st))
-        story.append(Spacer(1, 5))
-
-        detail_rows = [
-            ("净租售比", f"<b>{rd.get('net_rent_ratio_pct', '—')}</b>"),
-            ("成交预估价值", _money(rd.get("deal_value"))),
-            ("成交价值口径", _text(rd.get("deal_basis"))),
-            ("租金数据来源", _text(rd.get("rent_source"))),
-            ("区域基准匹配", _text(rd.get("benchmark_matched"))
-             + ("（区县级精确匹配）" if rd.get("benchmark_source") == "exact"
-                else "（同城均值）" if rd.get("benchmark_source") == "city"
-                else "（系统默认系数）")),
-        ]
-        story.append(_kv_table(detail_rows, st, cols=2))
+    # ---------------------------------------------------------- 5. 净租售比（仅物权轨道）
+    if not asset.is_debt:
+        story.append(Paragraph("六、净租售比测算明细", st["h1"]))
+        rd = asset.rent_detail or {}
+        story.append(Paragraph(rd.get("formula", ""), st["small"]))
         story.append(Spacer(1, 4))
-        story.append(Paragraph(
-            "口径说明：空置损耗统一按年毛租金的一定比例预留；税费与租金调用区域大数据均值；"
-            "成交预估价值按起拍价乘以成交系数（法拍资产惯例按底价成交）测算。"
-            "以上参数均可在系统后台调整。", st["small"]))
 
-    story.append(PageBreak())
+        if not rd.get("computable"):
+            story.append(Paragraph(
+                f"<font color='#b42318'><b>无法完成测算</b></font>："
+                f"{_text(rd.get('reason'), '数据不足')}。"
+                f"该维度按 0 分计，补充起拍价 / 面积 / 租金数据后可重新评估。",
+                st["body"]))
+        else:
+            rows = []
+            for line in rd.get("lines", []):
+                rows.append([line.get("sign", ""), line.get("name", ""),
+                             _money(line.get("amount")), line.get("note", "")])
+            story.append(_grid_table(["", "项目", "金额", "说明"], rows, st))
+            story.append(Spacer(1, 5))
+
+            detail_rows = [
+                ("净租售比", f"<b>{rd.get('net_rent_ratio_pct', '—')}</b>"),
+                ("成交预估价值", _money(rd.get("deal_value"))),
+                ("成交价值口径", _text(rd.get("deal_basis"))),
+                ("租金数据来源", _text(rd.get("rent_source"))),
+                ("区域基准匹配", _text(rd.get("benchmark_matched"))
+                 + ("（区县级精确匹配）" if rd.get("benchmark_source") == "exact"
+                    else "（同城均值）" if rd.get("benchmark_source") == "city"
+                    else "（系统默认系数）")),
+            ]
+            story.append(_kv_table(detail_rows, st, cols=2))
+            story.append(Spacer(1, 4))
+            story.append(Paragraph(
+                "口径说明：净租金 = 年毛租金 − 房产税（企业名下从租计征）− 租金开票税点 "
+                "− 土地使用税 − 年度修缮运维费 − 空置损耗预留；税费与租金调用区域大数据均值；"
+                "成交预估价值按起拍价乘以成交系数（法拍资产惯例按底价成交）测算。"
+                "以上参数均可在系统后台调整。", st["small"]))
+
+        story.append(PageBreak())
 
     # ---------------------------------------------------------- 6. 标签与结论
     story.append(Paragraph("七、风险标签与优势标签", st["h1"]))

@@ -19,7 +19,7 @@ from app.core.benchmark import benchmark_display, push_down_benchmark, resolve_b
 from app.core.pipeline import evaluate
 from app.core.ruleset import load_ruleset
 from app.database import get_db
-from app.models import Asset
+from app.models import APPRAISAL_STALE_MONTHS, Asset
 
 router = APIRouter(prefix="/api", tags=["api"])
 
@@ -75,6 +75,10 @@ class EvaluateRequest(BaseModel):
     land_idle_fee: float = 0.0
     construction_arrears: float = 0.0
     property_fee_owed: float = 0.0
+    utility_owed: float = 0.0
+    heating_owed: float = 0.0
+    transfer_tax_estimate: float = 0.0
+    owner_is_company: bool | None = None
 
     city_tier: str | None = None
     industry_support_ratio: float | None = None
@@ -82,6 +86,24 @@ class EvaluateRequest(BaseModel):
     turnover_ratio: float | None = None
     rent_per_sqm_month: float | None = None
     annual_gross_rent_override: float | None = None
+
+    # ---- 双轨制：物权 / 债权分流 + 评估基准 + 债权专属
+    asset_class: str = "property"
+    appraisal_at: datetime | None = None
+    appraisal_refreshed_price: float | None = None
+    market_comp_source: str | None = None
+    market_comp_count: int | None = None
+    debt_principal: float | None = None
+    debt_interest: float | None = None
+    collateral_value: float | None = None
+    debt_start_price: float | None = None
+    guarantee_rank: str = "unknown"
+    execution_stage: str = "unknown"
+    debtor_solvency: str = "unknown"
+    debt_doc_level: str = "unknown"
+    debt_transferable: bool | None = None
+    debt_limitation_ok: bool | None = None
+    competing_claims: int = 0
 
     raw_text: str | None = None
 
@@ -96,15 +118,41 @@ class _AssetStub:
         return self._data.get(item)
 
     @property
+    def is_debt(self) -> bool:
+        return (self._data.get("asset_class") or "property") == "debt"
+
+    @property
     def total_arrears(self) -> float:
         return float(self._data.get("tax_owed") or 0) + \
             float(self._data.get("land_idle_fee") or 0) + \
             float(self._data.get("construction_arrears") or 0) + \
-            float(self._data.get("property_fee_owed") or 0)
+            float(self._data.get("property_fee_owed") or 0) + \
+            float(self._data.get("utility_owed") or 0) + \
+            float(self._data.get("heating_owed") or 0)
+
+    @property
+    def effective_appraisal(self):
+        return (self._data.get("appraisal_refreshed_price")
+                or self._data.get("appraisal_price"))
+
+    @property
+    def appraisal_age_months(self):
+        at = self._data.get("appraisal_at")
+        if not at:
+            return None
+        from datetime import datetime as _dt
+        return (_dt.now() - at).total_seconds() / 86400.0 / 30.44
+
+    @property
+    def appraisal_stale(self) -> bool:
+        if self.is_debt:
+            return False
+        months = self.appraisal_age_months
+        return months is not None and months > APPRAISAL_STALE_MONTHS
 
     @property
     def reference_price(self):
-        return self._data.get("market_price") or self._data.get("appraisal_price")
+        return self._data.get("market_price") or self.effective_appraisal
 
     @property
     def discount_rate(self):
@@ -113,6 +161,42 @@ class _AssetStub:
         if not ref or not start or ref <= 0:
             return None
         return (ref - start) / ref
+
+    @property
+    def discount_vs_appraisal(self):
+        p = self.effective_appraisal
+        start = self._data.get("start_price")
+        if not p or not start or p <= 0:
+            return None
+        return (p - start) / p
+
+    @property
+    def discount_vs_market(self):
+        m = self._data.get("market_price")
+        start = self._data.get("start_price")
+        if not m or not start or m <= 0:
+            return None
+        return (m - start) / m
+
+    @property
+    def benchmark_divergence(self):
+        a, m = self.discount_vs_appraisal, self.discount_vs_market
+        if a is None or m is None:
+            return None
+        return abs(a - m)
+
+    @property
+    def debt_total_claim(self) -> float:
+        return float(self._data.get("debt_principal") or 0) + \
+            float(self._data.get("debt_interest") or 0)
+
+    @property
+    def guarantee_coverage(self):
+        claim = self.debt_total_claim
+        collateral = self._data.get("collateral_value")
+        if not collateral or claim <= 0:
+            return None
+        return float(collateral) / claim
 
     @property
     def deadline_days_left(self):
@@ -133,6 +217,8 @@ def api_evaluate(payload: EvaluateRequest, db: Session = Depends(get_db),
         "status": result.status,
         "vetoed": result.status == "vetoed",
         "veto_hits": result.veto_hits,
+        "penalty_hits": result.penalty_hits,
+        "asset_class": result.score_detail.get("asset_class", "property"),
         "total_score": result.total_score,
         "grade": result.grade,
         "grade_label": C.GRADES.get(result.grade),
@@ -189,6 +275,8 @@ def api_assets(db: Session = Depends(get_db),
             {
                 "id": a.id, "title": a.title, "grade": a.grade,
                 "total_score": a.total_score, "status": a.status,
+                "asset_class": a.asset_class or "property",
+                "asset_class_label": C.ASSET_CLASSES.get(a.asset_class or "property"),
                 "asset_type": a.asset_type,
                 "asset_type_label": C.ASSET_TYPES.get(a.asset_type),
                 "city": a.city, "district": a.district,
@@ -229,12 +317,16 @@ def api_asset(asset_id: int, db: Session = Depends(get_db)):
 def api_config(db: Session = Depends(get_db)):
     rs = load_ruleset(db)
     return {
-        "weights": rs.weights,
+        "weights_property": rs.weights,
+        "weights_debt": rs.weights_debt,
         "grade_thresholds": rs.grade_thresholds,
         "cost_params": rs.cost_params,
-        "legal_penalty": rs.legal_penalty,
         "tag_thresholds": rs.tag_thresholds,
-        "dimension_labels": C.DIMENSION_LABELS,
+        "dimension_labels": {
+            "property": C.DIMENSION_LABELS_PROPERTY,
+            "debt": C.DIMENSION_LABELS_DEBT,
+        },
+        "asset_classes": C.ASSET_CLASSES,
         "asset_types": C.ASSET_TYPES,
         "platforms": C.PLATFORMS,
         "disclaimer": rs.disclaimer,

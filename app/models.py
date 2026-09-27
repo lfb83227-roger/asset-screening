@@ -32,6 +32,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
+# 司法评估价超过该月数即视为「估值陈旧」，打标并进入人工复评队列。
+# 之所以放在模型层：它是资产的自解释属性，页面、API、报表都要用同一个口径。
+# 后台可通过 tag_thresholds.appraisal_stale_months 覆盖。
+APPRAISAL_STALE_MONTHS = 6.0
+
 
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -56,6 +61,13 @@ class Asset(Base, TimestampMixin):
     source_url: Mapped[str | None] = mapped_column(String(512))
     external_id: Mapped[str | None] = mapped_column(String(128), index=True)
     source_batch: Mapped[str | None] = mapped_column(String(64))
+
+    # -------------------------------------------------- 资产大类（双轨制分流开关）
+    # property = 物权（买的是资产本身）｜ debt = 债权（买的是收钱的权利）
+    # 两条轨道使用**完全不同的评分维度与否决规则**，此处是唯一分流依据。
+    asset_class: Mapped[str] = mapped_column(
+        String(16), index=True, default="property",
+        comment="资产大类：property 物权 / debt 债权")
 
     title: Mapped[str] = mapped_column(String(512), default="")
     asset_type: Mapped[str] = mapped_column(String(24), index=True, default="other")
@@ -106,12 +118,66 @@ class Asset(Base, TimestampMixin):
     can_clear: Mapped[bool | None] = mapped_column(Boolean, comment="可否清场")
     occupancy_note: Mapped[str | None] = mapped_column(String(512))
 
-    # -------------------------------------------------- 欠费
+    # -------------------------------------------------- 欠费（持有成本维度细分）
     tax_owed: Mapped[float] = mapped_column(Float, default=0.0, comment="欠税 元")
     land_idle_fee: Mapped[float] = mapped_column(Float, default=0.0, comment="土地闲置费 元")
     construction_arrears: Mapped[float] = mapped_column(
         Float, default=0.0, comment="工程欠款 元")
     property_fee_owed: Mapped[float] = mapped_column(Float, default=0.0, comment="物业欠费 元")
+    utility_owed: Mapped[float] = mapped_column(
+        Float, default=0.0, comment="水电燃气欠费 元")
+    heating_owed: Mapped[float] = mapped_column(
+        Float, default=0.0, comment="采暖费欠费 元")
+    owner_is_company: Mapped[bool | None] = mapped_column(
+        Boolean, comment="产权人是否为企业（影响从租房产税是否计扣；None 按从严视为企业）")
+    # 过户/取得环节需另行承担的交易税费（契税、增值税、个税等），人工估算填入
+    transfer_tax_estimate: Mapped[float | None] = mapped_column(
+        Float, comment="过户交易税费预估 元（含契税/增值税/个税等）")
+
+    # -------------------------------------------------- 评估基准（价格维度双基准）
+    # 司法评估价受「评估时点」影响极大，必须记录时点以便判定是否陈旧。
+    appraisal_at: Mapped[datetime | None] = mapped_column(
+        DateTime, comment="司法评估报告出具/评估价值时点")
+    appraisal_refreshed_price: Mapped[float | None] = mapped_column(
+        Float, comment="人工复评后的评估价（优先于 appraisal_price 参与打分）")
+    market_comp_source: Mapped[str | None] = mapped_column(
+        String(128), comment="市场可比案例来源说明（链家/贝壳/中指等）")
+    market_comp_count: Mapped[int | None] = mapped_column(
+        Integer, comment="可比案例样本数，样本太少则市场基准可信度下调")
+
+    # ================================================== 债权专属字段（asset_class=debt）
+    # 债权标的买的是「收款权利」，其价值取决于能否足额、快速收回，
+    # 与物权关心的区位/租金/清场完全不同，因此单列一组字段。
+    debt_principal: Mapped[float | None] = mapped_column(
+        Float, comment="债权本金 元")
+    debt_interest: Mapped[float | None] = mapped_column(
+        Float, comment="债权利息/违约金等 元")
+    collateral_value: Mapped[float | None] = mapped_column(
+        Float, comment="抵押物评估价值 元（算覆盖倍数的分子）")
+    debt_start_price: Mapped[float | None] = mapped_column(
+        Float, comment="债权转让起拍价/转让价 元")
+    # 覆盖倍数 = 抵押物价值 ÷ 债权本息，是债权第一命门
+    guarantee_rank: Mapped[str] = mapped_column(
+        String(24), default="unknown",
+        comment="担保顺位：first 首封/一顺位｜second 二顺位｜other 其他｜none 无担保")
+    execution_stage: Mapped[str] = mapped_column(
+        String(24), default="unknown",
+        comment="执行进展：judged 已判决未执行｜executing 执行中｜auctioning 已挂拍｜"
+                "failed 终本/流拍｜settled 已回款｜litigating 诉讼中｜unknown 未载明")
+    debtor_solvency: Mapped[str] = mapped_column(
+        String(24), default="unknown",
+        comment="债务人偿付能力：good 有可供执行财产｜fair 一般｜"
+                "poor 无偿付能力｜bankrupt 已破产｜unknown 未载明")
+    debt_doc_level: Mapped[str] = mapped_column(
+        String(24), default="unknown",
+        comment="债权凭证完整性：full 判决+合同+凭证齐全｜partial 部分缺失｜"
+                "weak 仅有借条/模糊｜unknown 未载明")
+    debt_transferable: Mapped[bool | None] = mapped_column(
+        Boolean, comment="债权是否可依法转让（涉限制转让条款时为否）")
+    debt_limitation_ok: Mapped[bool | None] = mapped_column(
+        Boolean, comment="诉讼时效是否在有效期内")
+    competing_claims: Mapped[int] = mapped_column(
+        Integer, default=0, comment="已知其他债权人数量（参与分配竞争者）")
 
     # -------------------------------------------------- 报废
     scrap_status: Mapped[str] = mapped_column(String(24), default="normal")
@@ -159,15 +225,55 @@ class Asset(Base, TimestampMixin):
 
     # -------------------------------------------------- 便捷属性
     @property
+    def is_debt(self) -> bool:
+        """是否为债权标的（决定走哪套评分引擎）。"""
+        return (self.asset_class or "property") == "debt"
+
+    @property
     def total_arrears(self) -> float:
-        """一票否决 V3 用的欠费总额。"""
+        """欠费总额（持有成本维度 + 否决规则共用）。"""
         return float(self.tax_owed or 0) + float(self.land_idle_fee or 0) + \
-            float(self.construction_arrears or 0) + float(self.property_fee_owed or 0)
+            float(self.construction_arrears or 0) + float(self.property_fee_owed or 0) + \
+            float(self.utility_owed or 0) + float(self.heating_owed or 0)
+
+    @property
+    def effective_appraisal(self) -> float | None:
+        """生效评估价：人工复评价优先于原始评估价（复评即人工修正，可信度更高）。"""
+        return self.appraisal_refreshed_price or self.appraisal_price
+
+    @property
+    def appraisal_age_months(self) -> float | None:
+        """评估时点距今天数折算月数；未载明时点返回 None。"""
+        if not self.appraisal_at:
+            return None
+        return (datetime.now() - self.appraisal_at).total_seconds() / 86400.0 / 30.44
+
+    @property
+    def appraisal_stale(self) -> bool:
+        """估值是否陈旧（超阈值月数）。债权标的无评估价概念，恒为 False。"""
+        if self.is_debt:
+            return False
+        months = self.appraisal_age_months
+        return months is not None and months > APPRAISAL_STALE_MONTHS
+
+    # ---- 债权专属计算
+    @property
+    def debt_total_claim(self) -> float:
+        """债权总额 = 本金 + 利息/违约金。"""
+        return float(self.debt_principal or 0) + float(self.debt_interest or 0)
+
+    @property
+    def guarantee_coverage(self) -> float | None:
+        """抵押物覆盖倍数 = 抵押物价值 ÷ 债权总额。债权评分的第一命门指标。"""
+        claim = self.debt_total_claim
+        if not self.collateral_value or claim <= 0:
+            return None
+        return float(self.collateral_value) / claim
 
     @property
     def reference_price(self) -> float | None:
-        """参考价：优先周边成交价，其次评估价（PRD 维度1）。"""
-        return self.market_price or self.appraisal_price
+        """参考价：优先周边成交价，其次生效评估价（PRD 维度1）。"""
+        return self.market_price or self.effective_appraisal
 
     @property
     def discount_rate(self) -> float | None:
@@ -175,6 +281,34 @@ class Asset(Base, TimestampMixin):
         if not ref or not self.start_price or ref <= 0:
             return None
         return (ref - self.start_price) / ref
+
+    @property
+    def discount_vs_appraisal(self) -> float | None:
+        """对司法评估价的折价率（双基准之一）。"""
+        p = self.effective_appraisal
+        if not p or not self.start_price or p <= 0:
+            return None
+        return (p - self.start_price) / p
+
+    @property
+    def discount_vs_market(self) -> float | None:
+        """对市场可比价的折价率（双基准之二）。"""
+        m = self.market_price
+        if not m or not self.start_price or m <= 0:
+            return None
+        return (m - self.start_price) / m
+
+    @property
+    def benchmark_divergence(self) -> float | None:
+        """两个基准的折价率分歧度 = |对评估价折价 − 对市场价折价|。
+
+        分歧过大说明「司法估值」与「市场真实成交」严重脱节，
+        此时无论用哪个分母都不可靠 → 价格维度应当降权并提示人工复核。
+        """
+        a, m = self.discount_vs_appraisal, self.discount_vs_market
+        if a is None or m is None:
+            return None
+        return abs(a - m)
 
     @property
     def deadline_days_left(self) -> float | None:
@@ -246,6 +380,16 @@ class VetoRule(Base, TimestampMixin):
     priority: Mapped[int] = mapped_column(Integer, default=100)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     keyword_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 否决规则按资产大类分流：物权与债权的「硬伤」完全不同，
+    # 业务确认物权可有一票否决、债权不适用，此字段是分流开关。
+    applies_to: Mapped[str] = mapped_column(
+        String(16), default="property",
+        comment="适用资产大类：property 物权｜debt 债权｜both 两者")
+    # 命中后处理方式：veto 直接 0 分淘汰｜penalty 转为重点扣分项
+    # （业务确认：大额欠费、清场风险不宜一票否决，应作为重点扣分）
+    action: Mapped[str] = mapped_column(
+        String(16), default="veto",
+        comment="命中处置：veto 一票否决｜penalty 重点扣分")
     description: Mapped[str | None] = mapped_column(Text)
     field_conditions: Mapped[list | None] = mapped_column(JSON)
     keywords: Mapped[list | None] = mapped_column(JSON)

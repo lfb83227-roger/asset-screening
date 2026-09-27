@@ -34,10 +34,18 @@
     <div class="t">{{ GRADES.get(a.grade, '未分级') }}
       <span class="badge {{ 'badge-risk' if a.status == 'vetoed' else 'badge-brand' }}">
         {{ ASSET_STATUSES.get(a.status, a.status) }}</span>
+      <span class="badge {{ 'badge-risk' if a.is_debt else 'badge-warn' }}">
+        {{ ASSET_CLASSES.get(a.asset_class or 'property') }}</span>
     </div>
     <div class="s">
-      折价率 <b>{{ a.discount_rate | pct(1) }}</b>　·　
-      净租售比 <b>{{ (a.rent_detail or {}).get('net_rent_ratio') | pct(2) }}</b>　·　
+      {% if a.is_debt %}
+        覆盖倍数 <b>{{ a.guarantee_coverage | num(2) }}</b>　·　
+        债权本息 <b>{{ a.debt_total_claim | money_short }}</b>　·　
+        担保顺位 <b>{{ GUARANTEE_RANKS.get(a.guarantee_rank, '—') }}</b>　·　
+      {% else %}
+        折价率 <b>{{ a.discount_rate | pct(1) }}</b>　·　
+        净租售比 <b>{{ (a.rent_detail or {}).get('net_rent_ratio') | pct(2) }}</b>　·　
+      {% endif %}
       起拍价 <b>{{ a.start_price | money_short }}</b>　·　
       截止 <b>{{ a.deadline_at | dt('%Y-%m-%d') }}</b>
       （{{ a.deadline_days_left | days_left }}）
@@ -48,8 +56,14 @@
   </div>
 </div>
 
-{# ============================== 一票否决 ============================== #}
-{% if a.veto_hits %}
+{# ============================== 一票否决 / 重点扣分 ============================== #}
+{% set _vee = [] %}{% set _pen = [] %}
+{% for h in (a.veto_hits or []) %}
+  {% if h.get('action', 'veto') == 'penalty' %}{% set _ = _pen.append(h) %}
+  {% else %}{% set _ = _vee.append(h) %}{% endif %}
+{% endfor %}
+
+{% if _vee %}
 <div class="panel mt16">
   <div class="panel-head">
     <h3 style="color:var(--risk)">一票否决命中情况（最高优先级）</h3>
@@ -57,7 +71,7 @@
   </div>
   <div class="panel-body">
     <div class="veto-box">
-      {% for h in a.veto_hits %}
+      {% for h in _vee %}
       <div class="veto-item">
         <b style="color:var(--risk)">{{ h.code }} · {{ h.name }}</b>
         <span class="small muted"> —— {{ h.description }}</span>
@@ -75,6 +89,29 @@
       </div>
       {% endfor %}
     </div>
+  </div>
+</div>
+{% endif %}
+
+{% if _pen %}
+<div class="panel mt16">
+  <div class="panel-head">
+    <h3 style="color:var(--warn, #b45309)">重点扣分项（已计入量化打分，不淘汰）</h3>
+    <span class="badge badge-warn">按业务要求降级为扣分项 · 可压价对冲</span>
+  </div>
+  <div class="panel-body">
+    <div class="veto-box">
+      {% for h in _pen %}
+      <div class="veto-item">
+        <b style="color:var(--warn, #b45309)">{{ h.code }} · {{ h.name }}</b>
+        <span class="small muted"> —— {{ h.description }}</span>
+        {% for ev in h.evidences %}
+        <div class="v-ev">↳ {{ ev }}</div>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+    <p class="hint">此类风险对应维度（清场与占有 / 持有成本）已额外重罚，请结合维度明细一并审阅。</p>
   </div>
 </div>
 {% endif %}
@@ -167,7 +204,8 @@
 </div>
 {% endif %}
 
-{# ============================== 净租售比 ============================== #}
+{# ============================== 净租售比（仅物权轨道） ============================== #}
+{% if not a.is_debt %}
 <div class="panel">
   <div class="panel-head">
     <h3>净租售比测算明细</h3>
@@ -222,6 +260,7 @@
     {% endif %}
   </div>
 </div>
+{% endif %}
 
 {# ============================== 结论 ============================== #}
 <div class="panel">

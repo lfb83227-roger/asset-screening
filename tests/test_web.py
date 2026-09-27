@@ -118,14 +118,100 @@ def test_dedup_keeps_latest_version():
 
 
 def test_veto_rules_all_covered():
-    """样本应覆盖 V1~V5 全部五条否决规则的分支。"""
+    """样本应覆盖所有 action=veto 的否决规则分支。
+
+    双轨制下 V2（清场风险）/ V3（大额欠费）已按业务要求降级为**重点扣分项**，
+    不再出现在 veto_hits 里，因此本用例只校验"确实是 veto 型"的规则。
+    """
     c = _login("admin", "admin123")
+    from app.core import constants as C
+    veto_codes = {r["code"] for r in C.VETO_RULE_SEED
+                  if r.get("action", "veto") == "veto"}
     items = c.get("/api/assets?status=vetoed&limit=200").json()["items"]
     codes = set()
     for it in items:
         detail = c.get(f"/api/assets/{it['id']}").json()
-        codes.update(h["code"] for h in (detail["veto_hits"] or []))
-    assert codes == {"V1", "V2", "V3", "V4", "V5"}, f"未被覆盖的否决规则：{codes}"
+        codes.update(h["code"] for h in (detail["veto_hits"] or [])
+                     if h.get("action", "veto") == "veto")
+    assert codes == veto_codes, f"未被覆盖的否决规则：{veto_codes - codes}"
+
+
+def test_veto_seed_has_penalty_rules():
+    """业务确认：V2 清场风险、V3 大额欠费必须是 penalty（重点扣分）而非 veto。"""
+    from app.core import constants as C
+    by_code = {r["code"]: r for r in C.VETO_RULE_SEED}
+    assert by_code["V2"]["action"] == "penalty", "V2 清场风险应为重点扣分项"
+    assert by_code["V3"]["action"] == "penalty", "V3 大额欠费应为重点扣分项"
+    assert by_code["V1"]["action"] == "veto"
+    assert by_code["V5"]["action"] == "veto"
+
+
+def test_debt_only_v6_can_veto():
+    """业务确认：债权轨道只有 V6（不可转让 / 过时效）可一票否决。
+
+    其余物权专属规则（V1 产权硬缺陷、V2 清场、V3 欠费、V4 权属争议、V5 报废）
+    一律不适用于债权 —— 债权是"收钱的权利"，其价值由覆盖倍数 / 顺位决定，
+    不存在物权那种"命中即淘汰"的硬伤。
+    """
+    c = _login("admin", "admin123")
+    items = c.get("/api/assets?limit=500").json()["items"]
+    debt_items = [it for it in items if it.get("asset_class") == "debt"]
+    assert debt_items, "样本中应包含债权标的"
+    for it in debt_items:
+        detail = c.get(f"/api/assets/{it['id']}").json()
+        filled = [h["code"] for h in (detail["veto_hits"] or [])
+                  if h.get("action", "veto") == "veto"]
+        # 债权轨道落库后被否决的，只能是 V6
+        assert filled in ([], ["V6"]), \
+            f"债权标的 {it['id']} 命中了非 V6 的否决规则：{filled}"
+    # 且样本中确实有一条 V6 被触发（保证规则真的在跑）
+    all_codes = set()
+    for it in debt_items:
+        detail = c.get(f"/api/assets/{it['id']}").json()
+        all_codes.update(h["code"] for h in (detail["veto_hits"] or []))
+    assert "V6" in all_codes, "样本应覆盖 V6 债权不可转让 / 过时效分支"
+
+
+def test_debt_and_property_use_different_dimensions():
+    """物权走 price/clearance/... 债权走 coverage/rank/...，两条轨道不得混用。"""
+    c = _login("admin", "admin123")
+    items = c.get("/api/assets?limit=500").json()["items"]
+    prop = next(it for it in items if it.get("asset_class") != "debt")
+    debt = next(it for it in items if it.get("asset_class") == "debt")
+
+    pd = c.get(f"/api/assets/{prop['id']}").json()["score_detail"]
+    dd = c.get(f"/api/assets/{debt['id']}").json()["score_detail"]
+    assert pd["asset_class"] == "property"
+    assert dd["asset_class"] == "debt"
+    assert set(pd["dimensions"]) & {"coverage", "rank", "execution"} == set()
+    assert set(dd["dimensions"]) & {"price", "clearance", "rent"} == set()
+
+
+def test_asset_list_track_filter_and_columns():
+    """列表页按轨道筛选：债权子集只含债权，物权子集不含债权；页面渲染不报错。"""
+    c = _login("admin", "admin123")
+
+    r_debt = c.get("/assets?asset_class=debt")
+    assert r_debt.status_code == 200
+    assert "债权" in r_debt.text
+
+    r_prop = c.get("/assets?asset_class=property")
+    assert r_prop.status_code == 200
+
+    # 债权轨道筛选结果数应等于库内债权总数
+    n_debt_api = len([it for it in c.get("/api/assets?limit=500").json()["items"]
+                      if it.get("asset_class") == "debt"])
+    assert n_debt_api >= 1
+    # 页面顶部计数与 API 一致（共 N 条）
+    assert f"共 {n_debt_api} 条" in r_debt.text
+
+
+def test_dashboard_renders_dual_track_kpis():
+    """总览页展示物权/债权拆分，不因缺失轨道数据而报错。"""
+    c = _login("admin", "admin123")
+    r = c.get("/")
+    assert r.status_code == 200
+    assert "物权" in r.text and "债权" in r.text
 
 
 # ==================================================================== 导入
@@ -210,26 +296,67 @@ def test_pdf_report_contains_disclaimer():
         assert len(r.content) > 20_000
 
 
+def test_pdf_for_debt_and_vetoed_assets():
+    """债权标的与被否决标的都必须能正常出报告（轨道分支不得抛异常）。"""
+    c = _login("admin", "admin123")
+    items = c.get("/api/assets?limit=500").json()["items"]
+    debt = [i for i in items if i.get("asset_class") == "debt"]
+    vetoed = [i for i in items if i["status"] == "vetoed"]
+    assert debt, "样本中应包含债权标的"
+    assert vetoed, "样本中应包含被否决标的"
+    for item in (debt[0], vetoed[0]):
+        r = c.get(f"/assets/{item['id']}/report.pdf")
+        assert r.status_code == 200, f"标的 {item['id']} 报告导出失败"
+        assert r.content[:5] == b"%PDF-"
+        assert len(r.content) > 20_000
+
+
 # ==================================================================== 配置
 def test_config_change_and_reevaluate():
+    """双轨制：物权权重与债权权重独立可调。"""
     c = _login("admin", "admin123")
     before = json.loads(c.get("/api/config").text)
-    assert before["weights"]["price"] == 30.0
+    assert before["weights_property"]["price"] == 30.0
+    assert before["weights_debt"]["coverage"] == 30.0
+    # 两条轨道互不影响
+    assert "coverage" not in before["weights_property"]
+    assert "price" not in before["weights_debt"]
 
     r = c.post("/admin/config", data={
-        "weights.price": "35", "weights.rent": "30", "weights.legal": "20",
-        "weights.location": "15", "weights.ownership": "5",
+        "weights_property.price": "35",
+        "weights_property.clearance": "30",
+        "weights_property.holding_cost": "15",
+        "weights_property.rent": "10",
+        "weights_property.location": "10",
+        "weights_debt.coverage": "35",
+        "weights_debt.rank": "25",
+        "weights_debt.execution": "20",
+        "weights_debt.solvency": "10",
+        "weights_debt.documentation": "10",
         "reevaluate": "on",
     }, follow_redirects=False)
     assert r.status_code == 303 and "ok=" in r.headers["location"]
-    assert json.loads(c.get("/api/config").text)["weights"]["price"] == 35.0
+    after = json.loads(c.get("/api/config").text)
+    assert after["weights_property"]["price"] == 35.0
+    assert after["weights_debt"]["coverage"] == 35.0
 
     # 还原
     c.post("/admin/config", data={
-        "weights.price": "30", "weights.rent": "30", "weights.legal": "20",
-        "weights.location": "15", "weights.ownership": "5", "reevaluate": "on",
+        "weights_property.price": "30",
+        "weights_property.clearance": "30",
+        "weights_property.holding_cost": "15",
+        "weights_property.rent": "15",
+        "weights_property.location": "10",
+        "weights_debt.coverage": "30",
+        "weights_debt.rank": "25",
+        "weights_debt.execution": "20",
+        "weights_debt.solvency": "15",
+        "weights_debt.documentation": "10",
+        "reevaluate": "on",
     })
-    assert json.loads(c.get("/api/config").text)["weights"]["price"] == 30.0
+    restored = json.loads(c.get("/api/config").text)
+    assert restored["weights_property"]["price"] == 30.0
+    assert restored["weights_debt"]["coverage"] == 30.0
 
 
 def test_disclaimer_cannot_be_cleared():

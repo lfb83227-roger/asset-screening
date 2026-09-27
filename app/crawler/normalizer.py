@@ -67,6 +67,31 @@ FIELD_ALIASES: dict[str, list[str]] = {
     "co_ownership_dispute": ["共有产权争议"],
     "irreversible_seal": ["不可解除查封"],
     "implicit_coownership": ["隐性共有产权提示"],
+    # ---- 双轨制：物权 / 债权分流
+    "asset_class": ["资产类别（物权/债权）", "资产大类", "标的类别", "物权债权",
+                    "asset_class"],
+    "owner_is_company": ["产权人是否企业", "产权人为企业", "业主类型"],
+    # ---- 评估基准（物权）
+    "appraisal_at": ["评估时点", "评估日期", "评估基准日", "评估时间"],
+    "appraisal_refreshed_price": ["人工复评评估价", "复评评估价"],
+    "market_comp_source": ["可比价来源", "市场价来源", "成交价来源"],
+    "market_comp_count": ["可比案例数", "可比样本数", "可比宗数"],
+    # ---- 持有成本细分（物权）
+    "utility_owed": ["水电欠费", "水电燃气欠费", "欠缴水电费"],
+    "heating_owed": ["采暖费欠费", "欠缴采暖费", "采暖欠费"],
+    "transfer_tax_estimate": ["过户税费", "过户税费预估", "交易税费预估"],
+    # ---- 债权专属
+    "debt_principal": ["债权本金", "本金", "债权金额", "债权本息本金"],
+    "debt_interest": ["债权利息", "利息违约金", "利息及违约金", "债权利息违约金"],
+    "collateral_value": ["抵押物评估价值", "抵押物价值", "抵押物估值"],
+    "debt_start_price": ["债权转让起拍价", "债权起拍价", "债权转让价", "转让价"],
+    "guarantee_rank": ["担保顺位", "受偿顺位", "顺位"],
+    "execution_stage": ["执行进展", "执行阶段", "执行情况", "诉讼阶段"],
+    "debtor_solvency": ["债务人偿付能力", "偿付能力", "债务人偿债能力"],
+    "debt_doc_level": ["债权凭证完整性", "凭证完整性", "债权凭证"],
+    "debt_transferable": ["债权可否转让", "是否可转让", "债权可转让"],
+    "debt_limitation_ok": ["诉讼时效", "是否过时效", "时效情况"],
+    "competing_claims": ["其他债权人数量", "竞争债权人数", "已知债权人数"],
     "raw_text": ["公告原文", "公告内容", "描述", "详情", "备注", "raw_text"],
 }
 
@@ -80,16 +105,20 @@ for _std, _aliases in FIELD_ALIASES.items():
 MONEY_FIELDS = {
     "start_price", "appraisal_price", "market_price", "deposit", "increment",
     "tax_owed", "land_idle_fee", "construction_arrears", "property_fee_owed",
-    "annual_gross_rent_override",
+    "utility_owed", "heating_owed", "transfer_tax_estimate",
+    "appraisal_refreshed_price", "annual_gross_rent_override",
+    "debt_principal", "debt_interest", "collateral_value", "debt_start_price",
 }
 RATIO_FIELDS = {"industry_support_ratio", "rental_demand_ratio", "turnover_ratio"}
 FLOAT_FIELDS = {"area_sqm", "land_area_sqm", "land_remaining_years",
                 "rent_per_sqm_month"} | RATIO_FIELDS
-INT_FIELDS = {"mortgage_count", "seal_count", "lawsuit_count", "dispute_freq"}
-DATE_FIELDS = {"listed_at", "deadline_at"}
+INT_FIELDS = {"mortgage_count", "seal_count", "lawsuit_count", "dispute_freq",
+              "market_comp_count", "competing_claims"}
+DATE_FIELDS = {"listed_at", "deadline_at", "appraisal_at"}
 BOOL_FIELDS = {"registration_ok", "transfer_restricted", "can_supplement_procedure",
                "occupied", "can_clear", "implicit_coownership",
-               "co_ownership_dispute", "irreversible_seal"}
+               "co_ownership_dispute", "irreversible_seal",
+               "owner_is_company", "debt_transferable", "debt_limitation_ok"}
 
 # 表格未填时字段的"空"表示（用于判断是否已显式提供）
 _EMPTY = (None, "", "未载明", "—", "-", "/", "无数据", "N/A", "n/a")
@@ -146,6 +175,52 @@ CITY_TIER_MAP = {
     "五线": "tier5", "五线城市": "tier5", "五线及以下": "tier5",
 }
 
+# ---- 双轨制枚举
+ASSET_CLASS_MAP = {
+    "物权": "property", "资产": "property", "实物": "property", "property": "property",
+    "债权": "debt", "应收": "debt", "不良债权": "debt", "debt": "debt",
+}
+
+GUARANTEE_RANK_MAP = {
+    "首封": "first", "一顺位": "first", "第一顺位": "first", "首押": "first",
+    "一押": "first", "first": "first",
+    "二顺位": "second", "第二顺位": "second", "二押": "second", "second": "second",
+    "三顺位": "second", "third": "second",
+    "其他担保": "other", "保证": "other", "质押": "other", "other": "other",
+    "无担保": "none", "信用": "none", "纯信用": "none", "无抵押": "none", "none": "none",
+    "未载明": "unknown", "unknown": "unknown",
+}
+
+EXECUTION_STAGE_MAP = {
+    "已回款": "settled", "已执结": "settled", "已执行完毕": "settled", "settled": "settled",
+    "已挂拍": "auctioning", "抵押物已挂拍": "auctioning", "已上网拍卖": "auctioning",
+    "auctioning": "auctioning",
+    "执行中": "executing", "已申请执行": "executing", "执行程序": "executing",
+    "executing": "executing",
+    "已判决": "judged", "判决未执行": "judged", "已判决未申请执行": "judged",
+    "judged": "judged",
+    "诉讼中": "litigating", "仲裁中": "litigating", "一审": "litigating",
+    "litigating": "litigating",
+    "终本": "failed", "流拍": "failed", "执行受阻": "failed", "失败": "failed",
+    "failed": "failed",
+    "未载明": "unknown", "unknown": "unknown",
+}
+
+DEBTOR_SOLVENCY_MAP = {
+    "良好": "good", "有财产": "good", "有足额财产": "good", "good": "good",
+    "一般": "fair", "部分财产": "fair", "有部分财产": "fair", "fair": "fair",
+    "差": "poor", "无财产": "poor", "无偿付能力": "poor", "poor": "poor",
+    "破产": "bankrupt", "已破产": "bankrupt", "清算": "bankrupt", "bankrupt": "bankrupt",
+    "未载明": "unknown", "unknown": "unknown",
+}
+
+DEBT_DOC_MAP = {
+    "齐全": "full", "完整": "full", "判决书合同借据齐全": "full", "full": "full",
+    "部分缺失": "partial", "部分": "partial", "需补充": "partial", "partial": "partial",
+    "薄弱": "weak", "仅有借条": "weak", "权属模糊": "weak", "weak": "weak",
+    "未载明": "unknown", "unknown": "unknown",
+}
+
 ASSET_TYPE_KEYWORDS = [
     ("industrial", ["厂房", "工业", "仓库", "车间", "厂区", "工业园区"]),
     ("land", ["土地", "地块", "宗地", "建设用地", "工业用地", "商住用地"]),
@@ -195,6 +270,34 @@ def guess_asset_type(text: str) -> str:
         if any(k in text for k in kws):
             return code
     return "other"
+
+
+#: 债权标的的文本特征词。命中任意一个 → 判定为债权轨道。
+#: 刻意只放"只有债权才会出现"的词，避免物权公告里的"处置""执行"误伤。
+DEBT_CLASS_KEYWORDS = (
+    "债权", "应收账款", "不良资产包", "债权转让", "债权本息", "本金及利息",
+    "借款合同", "借据", "欠款本息", "债权凭证", "债务人", "抵押物覆盖",
+)
+
+
+def detect_asset_class(rec: dict) -> str:
+    """自动判定物权 / 债权轨道。
+
+    优先采信显式字段：只要填了任一债权专属字段（本金/利息/担保顺位…），
+    即视为债权。否则回退到文本关键词判断（标题 + 公告原文）。
+    """
+    if any(rec.get(f) not in (None, "", 0) for f in
+           ("debt_principal", "debt_interest", "collateral_value", "debt_start_price")):
+        return "debt"
+    if (rec.get("guarantee_rank") or "unknown") not in ("unknown",):
+        return "debt"
+    if (rec.get("execution_stage") or "unknown") not in ("unknown",):
+        return "debt"
+    hint = " ".join(str(x) for x in
+                    (rec.get("title"), rec.get("raw_text")) if x)
+    if any(k in hint for k in DEBT_CLASS_KEYWORDS):
+        return "debt"
+    return "property"
 
 
 # ==================================================================== 主归一
@@ -260,6 +363,13 @@ def normalize_record(raw: dict, platform: str = "manual") -> dict:
     rec["scrap_status"] = _enum(g("scrap_status"), SCRAP_MAP, "normal")
     rec["compliance_level"] = _enum(g("compliance_level"), COMPLIANCE_MAP, "full")
     rec["city_tier"] = _enum(g("city_tier"), CITY_TIER_MAP, None) or None
+
+    # ---- 双轨制枚举
+    rec["asset_class"] = _enum(g("asset_class"), ASSET_CLASS_MAP, None) or detect_asset_class(rec)
+    rec["guarantee_rank"] = _enum(g("guarantee_rank"), GUARANTEE_RANK_MAP, "unknown")
+    rec["execution_stage"] = _enum(g("execution_stage"), EXECUTION_STAGE_MAP, "unknown")
+    rec["debtor_solvency"] = _enum(g("debtor_solvency"), DEBTOR_SOLVENCY_MAP, "unknown")
+    rec["debt_doc_level"] = _enum(g("debt_doc_level"), DEBT_DOC_MAP, "unknown")
 
     at = g("asset_type")
     if at:

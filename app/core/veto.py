@@ -4,7 +4,16 @@
 * 字段条件是确定性的（土地性质、查封数量、欠费金额…），优先采信；
 * 关键词是对公告原文的兜底扫描，一期不引入大模型语义解析（PRD 六-1）。
 
-命中任意一条 → 直接 0 分、C 类淘汰，不进入五维打分。
+**双轨制（业务确认）**：
+* 物权（property）可有一票否决 —— 产权硬缺陷、无法清场、权属争议、资产报废。
+* 债权（debt）**不适用一票否决** —— 债权本身是"收钱的权利"，其价值由覆盖倍数、
+  顺位、执行进展决定，不存在"命中即淘汰"的单一硬伤，故走纯量化打分。
+* 每条规则带 `applies_to` 字段声明适用范围，引擎按标的 asset_class 分流。
+
+**处置方式（业务确认）**：
+* `action=veto`    命中即 0 分、C 类淘汰，不进入量化打分；
+* `action=penalty` 命中转入量化打分的**重点扣分项**（如大额欠费、清场风险），
+  不再一票否决 —— 因为这类风险可以靠压价对冲，直接淘汰会错失可修复标的。
 """
 from __future__ import annotations
 
@@ -131,13 +140,35 @@ def _fmt_evidence(label: str, cond: dict, asset) -> str:
     return f"{label}（实际值：{actual}）"
 
 
-def evaluate_veto(asset, ruleset: RuleSet) -> list[dict]:
-    """返回命中的否决项列表；空列表表示无否决风险。"""
-    hits: list[dict] = []
+def _rule_applies(rule: dict, asset) -> bool:
+    """该规则是否适用于此标的（按资产大类分流）。
+
+    债权标的默认不适用任何否决规则 —— 业务确认债权不做一票否决。
+    """
+    applies = (rule.get("applies_to") or "property").strip()
+    if applies == "both":
+        return True
+    return applies == ("debt" if getattr(asset, "is_debt", False) else "property")
+
+
+def evaluate_veto(asset, ruleset: RuleSet) -> dict:
+    """执行否决判定。
+
+    返回 `{"veto": [...], "penalty": [...]}`：
+    * `veto`    命中且 action=veto 的规则 → 调用方应直接判 0 分 C 类；
+    * `penalty` 命中但 action=penalty 的规则 → 交给量化打分当重点扣分项，
+                并附上规则名与证据，供报告展示。
+
+    债权标的天然不参与否决判定（业务确认），此时两列表均为空。
+    """
+    veto_hits: list[dict] = []
+    penalty_hits: list[dict] = []
     text = _collect_text(asset)
 
     for rule in ruleset.veto_rules:
         if not rule.get("enabled", True):
+            continue
+        if not _rule_applies(rule, asset):
             continue
 
         evidences: list[str] = []
@@ -162,12 +193,21 @@ def evaluate_veto(asset, ruleset: RuleSet) -> list[dict]:
             "code": rule["code"],
             "name": rule["name"],
             "description": rule.get("description", ""),
+            "applies_to": rule.get("applies_to", "property"),
+            "action": rule.get("action", "veto"),
             "evidences": evidences,
             "matched_keywords": matched_keywords,
         }
         if suppressed:
             item["suppressed_keywords"] = suppressed
-        hits.append(item)
 
-    hits.sort(key=lambda h: h["code"])
-    return hits
+        (penalty_hits if item["action"] == "penalty" else veto_hits).append(item)
+
+    veto_hits.sort(key=lambda h: h["code"])
+    penalty_hits.sort(key=lambda h: h["code"])
+    return {"veto": veto_hits, "penalty": penalty_hits}
+
+
+def evaluate_veto_legacy(asset, ruleset: RuleSet) -> list[dict]:
+    """兼容旧调用：只返回真正触发一票否决的命中项。"""
+    return evaluate_veto(asset, ruleset)["veto"]
